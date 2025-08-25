@@ -1,0 +1,17 @@
+[Unit]
+Description=Smart Route Manager
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/smartroute daemon --config /etc/smartroute/config.json
+Restart=always
+RestartSec=5
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
