@@ -92,6 +92,47 @@ func (rm *BSDRouteManager) FlushRoutes(gateway net.IP) error {
 	return nil // Routes will be overwritten/skipped during batch add
 }
 
+// CleanupRoutesForNetworks removes all existing routes for the specified networks/IPs
+func (rm *BSDRouteManager) CleanupRoutesForNetworks(networks []net.IPNet, log *logger.Logger) error {
+	if len(networks) == 0 {
+		return nil
+	}
+
+	// Get all current routes
+	allRoutes, err := rm.ListRoutes()
+	if err != nil {
+		log.Debug("failed to list routes for cleanup", "error", err)
+		// Don't fail - we'll try to delete anyway
+	}
+
+	var routesToDelete []Route
+	
+	// Find existing routes that match our target networks
+	for _, network := range networks {
+		// Check all current routes to see if any match this network
+		for _, route := range allRoutes {
+			if routesMatch(network, route.Network) {
+				routesToDelete = append(routesToDelete, route)
+				log.Debug("found existing route to cleanup", 
+					"network", route.Network.String(), 
+					"gateway", route.Gateway.String())
+			}
+		}
+	}
+
+	// Delete found routes
+	if len(routesToDelete) > 0 {
+		log.Info("cleaning up existing routes", "count", len(routesToDelete))
+		if err := rm.BatchDeleteRoutes(routesToDelete, log); err != nil {
+			log.Warn("failed to cleanup some routes", "error", err)
+			// Don't return error - some routes might not exist anymore
+		}
+	}
+
+	return nil
+}
+
+
 func (rm *BSDRouteManager) Close() error {
 	return unix.Close(rm.socket)
 }
@@ -150,8 +191,17 @@ func (rm *BSDRouteManager) addRouteDirect(network *net.IPNet, gateway net.IP, lo
 }
 
 func (rm *BSDRouteManager) deleteRouteDirect(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
-	// Use native system call for better performance
-	return rm.deleteRouteNative(network, gateway, log)
+	// Try native system call first
+	err := rm.deleteRouteNative(network, gateway, log)
+	
+	// If native method fails with "no such process", try command line as fallback
+	if err != nil && strings.Contains(err.Error(), "no such process") {
+		log.Debug("Native delete failed with 'no such process', trying command line fallback", 
+			"network", network.String(), "gateway", gateway.String())
+		return rm.deleteRouteCommand(network, gateway, log)
+	}
+	
+	return err
 }
 
 func (rm *BSDRouteManager) batchOperation(routes []Route, action ActionType, log *logger.Logger) error {
@@ -186,5 +236,219 @@ func parseDefaultRoute(output string) (net.IP, string, error) {
 }
 
 func parseNetstatOutput(output string) ([]Route, error) {
-	return nil, fmt.Errorf("not implemented")
+	var routes []Route
+	lines := strings.Split(output, "\n")
+	
+	// Skip header lines and find the start of routing table
+	start := -1
+	for i, line := range lines {
+		if strings.Contains(line, "Destination") && strings.Contains(line, "Gateway") {
+			start = i + 1
+			break
+		}
+	}
+	
+	if start == -1 {
+		// Try alternative header format
+		for i, line := range lines {
+			if strings.Contains(line, "Internet:") {
+				start = i + 2 // Skip "Internet:" and the header line
+				break
+			}
+		}
+	}
+	
+	if start == -1 {
+		return routes, nil // No routing table found
+	}
+	
+	for i := start; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		
+		// Skip non-route lines (like "Internet6:" section)
+		if strings.Contains(line, ":") && !strings.Contains(line, ".") {
+			break
+		}
+		
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		
+		destination := fields[0]
+		gateway := fields[1]
+		iface := ""
+		
+		// Parse fields based on standard netstat format:
+		// Destination Gateway Flags Netif [Expire]
+		if len(fields) >= 4 {
+			iface = fields[3] // Netif is always the 4th field (index 3)
+		}
+		
+		// Skip if no interface or gateway
+		if gateway == "" || gateway == "-" || iface == "" {
+			continue
+		}
+		
+		// Parse destination network
+		network, err := parseDestination(destination)
+		if err != nil {
+			continue // Skip unparseable destinations
+		}
+		
+		// Parse gateway IP
+		gwIP := net.ParseIP(gateway)
+		if gwIP == nil {
+			continue // Skip unparseable gateways (like link# formats)
+		}
+		
+		route := Route{
+			Network:   *network,
+			Gateway:   gwIP,
+			Interface: iface,
+		}
+		
+		routes = append(routes, route)
+	}
+	
+	return routes, nil
+}
+
+// parseDestination parses various destination formats from netstat
+func parseDestination(dest string) (*net.IPNet, error) {
+	// Handle special destinations
+	if dest == "default" {
+		_, network, _ := net.ParseCIDR("0.0.0.0/0")
+		return network, nil
+	}
+	
+	// Handle CIDR notation (e.g., "192.168.1.0/24" or "114.114.114.114/32")
+	if strings.Contains(dest, "/") {
+		// Handle netstat's simplified format like "1.0.1/24" -> "1.0.1.0/24"
+		parts := strings.Split(dest, "/")
+		if len(parts) == 2 {
+			ip := parts[0]
+			mask := parts[1]
+			
+			// Count dots in IP part
+			dotCount := strings.Count(ip, ".")
+			
+			// Add missing octets to make it a valid IP
+			switch dotCount {
+			case 0: // "1/24" -> "1.0.0.0/24"
+				ip = ip + ".0.0.0"
+			case 1: // "1.0/24" -> "1.0.0.0/24" 
+				ip = ip + ".0.0"
+			case 2: // "1.0.1/24" -> "1.0.1.0/24"
+				ip = ip + ".0"
+			case 3: // "1.0.1.0/24" - already complete
+				// no change needed
+			}
+			
+			dest = ip + "/" + mask
+		}
+		
+		_, network, err := net.ParseCIDR(dest)
+		return network, err
+	}
+	
+	// Handle single IP addresses (assume /32 for IPv4, /128 for IPv6)
+	ip := net.ParseIP(dest)
+	if ip != nil {
+		if ip.To4() != nil {
+			// IPv4
+			return &net.IPNet{
+				IP:   ip,
+				Mask: net.CIDRMask(32, 32),
+			}, nil
+		} else {
+			// IPv6
+			return &net.IPNet{
+				IP:   ip,
+				Mask: net.CIDRMask(128, 128),
+			}, nil
+		}
+	}
+	
+	// Handle incomplete network addresses without explicit mask (e.g., "203.26.55" -> "203.26.55.0/24")
+	if strings.Contains(dest, ".") {
+		dotCount := strings.Count(dest, ".")
+		if dotCount < 3 {
+			// Add missing octets and assume appropriate network mask
+			switch dotCount {
+			case 1: // "203.26" -> "203.26.0.0/16"
+				dest = dest + ".0.0"
+				return &net.IPNet{
+					IP:   net.ParseIP(dest),
+					Mask: net.CIDRMask(16, 32),
+				}, nil
+			case 2: // "203.26.55" -> "203.26.55.0/24"
+				dest = dest + ".0"
+				return &net.IPNet{
+					IP:   net.ParseIP(dest),
+					Mask: net.CIDRMask(24, 32),
+				}, nil
+			}
+		}
+	}
+	
+	// Assume /32 for what looks like a complete IP
+	testIP := net.ParseIP(dest)
+	if testIP != nil {
+		if testIP.To4() != nil {
+			return &net.IPNet{
+				IP:   testIP,
+				Mask: net.CIDRMask(32, 32),
+			}, nil
+		}
+	}
+	
+	return nil, fmt.Errorf("unsupported destination format: %s", dest)
+}
+
+// deleteRouteCommand deletes a route using the command line route tool as fallback
+func (rm *BSDRouteManager) deleteRouteCommand(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
+	// For single IP addresses (/32), use just the IP without /32
+	var target string
+	if network.Mask != nil {
+		ones, bits := network.Mask.Size()
+		if bits == 32 && ones == 32 {
+			// This is a /32 route, use just the IP
+			target = network.IP.String()
+		} else {
+			// This is a network route, use CIDR notation
+			target = network.String()
+		}
+	} else {
+		target = network.IP.String()
+	}
+	
+	log.Debug("Using command line route delete", "target", target, "gateway", gateway.String())
+	
+	cmd := exec.Command("route", "-n", "delete", target, gateway.String())
+	output, err := cmd.CombinedOutput()
+	
+	if err != nil {
+		// Check if this is an acceptable "not found" error
+		outputStr := string(output)
+		if strings.Contains(outputStr, "not in table") || strings.Contains(outputStr, "No such process") {
+			log.Debug("Route not found in table (acceptable)", "target", target, "output", outputStr)
+			return nil // Route already doesn't exist
+		}
+		
+		log.Error("Command line route delete failed", "target", target, "gateway", gateway.String(), 
+			"error", err, "output", outputStr)
+		return &RouteError{
+			Type:    ErrSystemCall,
+			Network: *network,
+			Gateway: gateway,
+			Cause:   fmt.Errorf("command line delete failed: %w, output: %s", err, outputStr),
+		}
+	}
+	
+	log.Debug("Command line route delete succeeded", "target", target, "gateway", gateway.String())
+	return nil
 }

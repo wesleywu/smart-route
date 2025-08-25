@@ -5,7 +5,6 @@ package routing
 import (
 	"fmt"
 	"net"
-	"strings"
 	"syscall"
 	"unsafe"
 
@@ -186,30 +185,18 @@ func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, g
 
 	_, err := unix.Write(rm.socket, buf)
 	if err != nil {
-		// Check if this is a route not found error (common during deletion)
-		errStr := fmt.Sprintf("%v", err)
-		if strings.Contains(errStr, "no such process") || strings.Contains(errStr, "no such file or directory") || strings.Contains(errStr, "ESRCH") || strings.Contains(errStr, "ENOENT") {
-			if msgType == RTM_DELETE {
-				log.Debug("Route not found during deletion (expected)", "error", err, "network", network.String(), "gateway", gateway.String())
-			} else {
-				log.Error("Failed to send route message", "error", err, "operation", "add", "network", network.String(), "gateway", gateway.String())
-			}
-		} else {
-			operation := "add"
-			if msgType == RTM_DELETE {
-				operation = "delete"
-			}
-			log.Error("Failed to send route message", "error", err, "operation", operation, "network", network.String(), "gateway", gateway.String())
+		operation := "add"
+		if msgType == RTM_DELETE {
+			operation = "delete"
 		}
+		log.Error("Failed to send route message", "error", err, "operation", operation, "network", network.String(), "gateway", gateway.String())
 		return &RouteError{
 			Type:    ErrSystemCall,
-			Network: *network,  // Dereference pointer to get value
+			Network: *network,
 			Gateway: gateway,
 			Cause:   fmt.Errorf("failed to send route message: %w", err),
 		}
 	}
-
-	log.Debug("Sent route message", "buf", buf)
 	return nil
 }
 

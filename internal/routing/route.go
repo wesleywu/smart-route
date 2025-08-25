@@ -17,6 +17,8 @@ type RouteManager interface {
 	GetDefaultGateway() (net.IP, string, error)
 	ListRoutes() ([]Route, error)
 	FlushRoutes(gateway net.IP) error
+	// CleanupRoutesForNetworks removes all existing routes for the specified networks/IPs
+	CleanupRoutesForNetworks(networks []net.IPNet, log *logger.Logger) error
 	Close() error
 }
 
@@ -198,4 +200,11 @@ func (m *Metrics) GetStats() (int64, int64, int64, time.Duration, int64) {
 	defer m.mutex.RUnlock()
 	
 	return m.RouteOperations, m.SuccessfulOps, m.FailedOps, m.AverageOpTime, m.NetworkChanges
+}
+
+// routesMatch checks if two networks are the same
+func routesMatch(net1, net2 net.IPNet) bool {
+	return net1.IP.Equal(net2.IP) && 
+		   len(net1.Mask) == len(net2.Mask) &&
+		   net1.Mask.String() == net2.Mask.String()
 }

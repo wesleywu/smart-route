@@ -131,6 +131,23 @@ func (rm *BSDRouteManager) concurrentBatchOperation(routes []Route, action Actio
 					return
 				}
 				
+				// Special handling for "no such process" error in delete operations
+				if action == ActionDelete && strings.Contains(err.Error(), "no such process") {
+					log.Debug("Native batch delete failed with 'no such process', trying command line fallback", 
+						"network", r.Network.String(), "gateway", r.Gateway.String())
+					
+					// Try command line fallback
+					fallbackErr := rm.deleteRouteCommand(&r.Network, r.Gateway, log)
+					if fallbackErr == nil {
+						// Command line succeeded, don't report the native error
+						return
+					}
+					
+					// Both native and command line failed, report the original error
+					log.Debug("Command line fallback also failed", 
+						"network", r.Network.String(), "fallback_error", fallbackErr)
+				}
+				
 				errChan <- err
 			}
 		}(route)
@@ -212,20 +229,21 @@ func isRouteNotFoundError(err error) bool {
 	// Always check the complete error message first
 	errStr := fmt.Sprintf("%v", err)
 	if strings.Contains(errStr, "no such file or directory") ||
-	   strings.Contains(errStr, "no such process") ||
-	   strings.Contains(errStr, "ENOENT") ||
-	   strings.Contains(errStr, "ESRCH") {
+	   strings.Contains(errStr, "ENOENT") {
 		return true
 	}
+	
+	// NOTE: "no such process" (ESRCH) is NOT treated as "route not found"
+	// on macOS because it often indicates a different type of system error
+	// rather than the route simply not existing
 	
 	// Also check structured RouteError
 	if routeErr, ok := err.(*RouteError); ok {
 		if routeErr.Type == ErrSystemCall && routeErr.Cause != nil {
 			causeStr := fmt.Sprintf("%v", routeErr.Cause)
 			return strings.Contains(causeStr, "no such file or directory") ||
-				   strings.Contains(causeStr, "no such process") ||
-				   strings.Contains(causeStr, "ENOENT") ||
-				   strings.Contains(causeStr, "ESRCH")
+				   strings.Contains(causeStr, "ENOENT")
+			// NOTE: Removed "no such process" and "ESRCH" from here too
 		}
 	}
 	

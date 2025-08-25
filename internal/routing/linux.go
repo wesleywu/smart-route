@@ -78,8 +78,49 @@ func (rm *LinuxRouteManager) FlushRoutes(gateway net.IP) error {
 		}
 	}
 
-	return rm.BatchDeleteRoutes(routesToDelete)
+	return rm.BatchDeleteRoutes(routesToDelete, nil)
 }
+
+// CleanupRoutesForNetworks removes all existing routes for the specified networks/IPs
+func (rm *LinuxRouteManager) CleanupRoutesForNetworks(networks []net.IPNet, log *logger.Logger) error {
+	if len(networks) == 0 {
+		return nil
+	}
+
+	// Get all current routes
+	allRoutes, err := rm.ListRoutes()
+	if err != nil {
+		log.Debug("failed to list routes for cleanup", "error", err)
+		// Don't fail - we'll try to delete anyway
+	}
+
+	var routesToDelete []Route
+	
+	// Find existing routes that match our target networks
+	for _, network := range networks {
+		// Check all current routes to see if any match this network
+		for _, route := range allRoutes {
+			if routesMatch(network, route.Network) {
+				routesToDelete = append(routesToDelete, route)
+				log.Debug("found existing route to cleanup", 
+					"network", route.Network.String(), 
+					"gateway", route.Gateway.String())
+			}
+		}
+	}
+
+	// Delete found routes
+	if len(routesToDelete) > 0 {
+		log.Info("cleaning up existing routes", "count", len(routesToDelete))
+		if err := rm.BatchDeleteRoutes(routesToDelete, log); err != nil {
+			log.Warn("failed to cleanup some routes", "error", err)
+			// Don't return error - some routes might not exist anymore
+		}
+	}
+
+	return nil
+}
+
 
 func (rm *LinuxRouteManager) Close() error {
 	return nil

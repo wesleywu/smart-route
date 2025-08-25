@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"runtime"
 
@@ -150,7 +149,14 @@ func runOnce(cmd *cobra.Command, args []string) {
 		gatewayState = &config.GatewayState{}
 	}
 
-	// Check if gateway has changed
+	// Create unified route switch handler
+	routeSwitch, err := routing.NewRouteSwitch(rm, chnRoutes, chnDNS, log, cfg.ChnRouteFile, cfg.ChnDNSFile)
+	if err != nil {
+		log.Error("Failed to create route switch", "error", err)
+		os.Exit(1)
+	}
+
+	// Handle route switching based on gateway state
 	if gatewayState.IsGatewayChanged(gateway, iface) {
 		prevGateway, prevIface := gatewayState.GetPreviousGateway()
 		log.Info("Gateway change detected",
@@ -159,55 +165,36 @@ func runOnce(cmd *cobra.Command, args []string) {
 			"current_gateway", gateway.String(),
 			"current_interface", iface)
 
-		// Clean up routes for previous gateway
-		log.Info("Cleaning up routes for previous gateway", "gateway", prevGateway.String())
-		if err := routing.CleanupRoutesForGateway(rm, chnRoutes, chnDNS, prevGateway, log); err != nil {
-			log.Warn("Failed to cleanup routes for previous gateway", "error", err)
+		// Use unified route switch logic
+		if err := routeSwitch.SwitchToGateway(prevGateway, gateway, iface); err != nil {
+			log.Error("Failed to switch routes", "error", err)
+			os.Exit(1)
 		}
 	} else if gatewayState.HasPreviousState() {
 		log.Info("Gateway unchanged", "gateway", gateway.String(), "interface", iface)
-		// Still clean up any existing routes to ensure consistency
-		log.Info("Cleaning up existing routes for consistency...")
-		if err := routing.CleanupRoutesForGateway(rm, chnRoutes, chnDNS, gateway, log); err != nil {
-			log.Debug("No existing routes found to cleanup", "error", err)
+		// Use unified setup logic for consistency
+		if err := routeSwitch.SetupInitialRoutes(gateway, iface); err != nil {
+			log.Error("Failed to setup routes", "error", err)
+			os.Exit(1)
 		}
 	} else {
 		log.Info("First time setup", "gateway", gateway.String(), "interface", iface)
-	}
-
-	var routes []routing.Route
-	for _, network := range chnRoutes.GetNetworks() {
-		routes = append(routes, routing.Route{
-			Network: network,  // Now using value instead of pointer
-			Gateway: gateway,
-		})
-	}
-
-	for _, ip := range chnDNS.GetIPs() {
-		var network net.IPNet
-		if ip.To4() != nil {
-			network = net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
-		} else {
-			network = net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
+		// Use unified initial setup logic
+		if err := routeSwitch.SetupInitialRoutes(gateway, iface); err != nil {
+			log.Error("Failed to setup initial routes", "error", err)
+			os.Exit(1)
 		}
-		routes = append(routes, routing.Route{
-			Network: network,
-			Gateway: gateway,
-		})
 	}
 
-	log.Info("Setting up routes", "gateway", gateway.String(), "total", len(routes))
-	if err := rm.BatchAddRoutes(routes, log); err != nil {
-		log.Error("Failed to setup routes", "error", err)
-		os.Exit(1)
-	}
+	// Calculate total routes for gateway state
+	totalRoutes := chnRoutes.Size() + chnDNS.Size()
 
 	// Update gateway state after successful setup
-	gatewayState.Update(gateway, iface, len(routes))
+	gatewayState.Update(gateway, iface, totalRoutes)
 	if err := gatewayState.Save(""); err != nil {
 		log.Warn("Failed to save gateway state", "error", err)
 	} else {
-		log.Info("Gateway state saved", "gateway", gateway.String(), "routes", len(routes))
+		log.Info("Gateway state saved", "gateway", gateway.String(), "routes", totalRoutes)
 	}
 
 	log.Info("Route setup completed successfully")

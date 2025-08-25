@@ -23,6 +23,7 @@ type ServiceManager struct {
 	logger       *logger.Logger
 	monitor      *network.NetworkMonitor
 	router       routing.RouteManager
+	routeSwitch  *routing.RouteSwitch
 	chnRoutes    *config.IPSet
 	chnDNS       *config.DNSServers
 	stopChan     chan os.Signal
@@ -67,6 +68,12 @@ func NewServiceManager(cfg *config.Config, log *logger.Logger) (*ServiceManager,
 	sm.chnDNS, err = config.LoadChnDNS(cfg.ChnDNSFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load Chinese DNS: %w", err)
+	}
+
+	// Initialize route switch with unified logic
+	sm.routeSwitch, err = routing.NewRouteSwitch(sm.router, sm.chnRoutes, sm.chnDNS, sm.logger, cfg.ChnRouteFile, cfg.ChnDNSFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create route switch: %w", err)
 	}
 
 	return sm, nil
@@ -203,29 +210,10 @@ func (sm *ServiceManager) handleGatewayChange(newGW net.IP, newIface string) err
 	oldIface := sm.currentIface
 	sm.mutex.Unlock()
 
-	sm.logger.Info("starting gateway change", 
-		"old_gateway", oldGW.String(),
-		"new_gateway", newGW.String())
-
-	// CRITICAL: Must delete old routes FIRST
-	// Old routes pointing to unreachable gateway will block all traffic
-	sm.logger.Info("phase 1: deleting old routes (critical for connectivity)")
-	if err := sm.flushOldRoutes(oldGW); err != nil {
-		// This is critical - if we can't delete old routes, traffic won't work
-		sm.logger.Error("failed to delete old routes - network may be broken", "gateway", oldGW.String(), "error", err)
-		return fmt.Errorf("critical: failed to delete old routes for %s: %w", oldGW.String(), err)
-	}
-
-	// Phase 2: Add new routes immediately after old routes are cleared
-	sm.logger.Info("phase 2: adding new routes")
-	if err := sm.setupRoutesForGateway(newGW); err != nil {
-		sm.logger.Error("failed to setup new routes - network is broken", "gateway", newGW.String(), "error", err)
-		// Try to restore old routes as fallback (if possible)
-		sm.logger.Info("attempting to restore old routes as fallback")
-		if restoreErr := sm.setupRoutesForGateway(oldGW); restoreErr != nil {
-			sm.logger.Error("failed to restore old routes - network completely broken", "error", restoreErr)
-		}
-		return fmt.Errorf("critical: failed to setup routes for new gateway %s: %w", newGW.String(), err)
+	// Use unified route switch logic
+	if err := sm.routeSwitch.SwitchToGateway(oldGW, newGW, newIface); err != nil {
+		sm.logger.Error("failed to switch routes", "error", err)
+		return err
 	}
 
 	// Update current gateway after successful transition
@@ -240,7 +228,7 @@ func (sm *ServiceManager) handleGatewayChange(newGW net.IP, newIface string) err
 	}
 
 	sm.logger.Info("gateway change completed successfully",
-		"old_gateway", oldGW.String(),
+		"old_gateway", sm.ipToString(oldGW),
 		"old_interface", oldIface,
 		"new_gateway", newGW.String(),
 		"new_interface", newIface)
@@ -249,55 +237,10 @@ func (sm *ServiceManager) handleGatewayChange(newGW net.IP, newIface string) err
 }
 
 func (sm *ServiceManager) setupInitialRoutes() error {
-	return sm.setupRoutesForGateway(sm.currentGW)
+	// Use unified route switch logic for initial setup
+	return sm.routeSwitch.SetupInitialRoutes(sm.currentGW, sm.currentIface)
 }
 
-func (sm *ServiceManager) setupRoutesForGateway(gateway net.IP) error {
-	start := time.Now()
-
-	routes := sm.buildRoutes(gateway)
-	total := len(routes)
-	
-	sm.logger.Info("setting up routes", "gateway", gateway.String(), "total", total)
-
-	err := sm.router.BatchAddRoutes(routes, sm.logger)
-	duration := time.Since(start).Milliseconds()
-
-	if err != nil {
-		sm.logger.BatchOperation("add", total, 0, total, duration)
-		return err
-	}
-
-	sm.logger.BatchOperation("add", total, total, 0, duration)
-	return nil
-}
-
-func (sm *ServiceManager) flushOldRoutes(gateway net.IP) error {
-	start := time.Now()
-	
-	sm.logger.Info("flushing old routes", "gateway", gateway.String())
-	
-	// Strategy 1: Try to delete specific routes we know we added
-	oldRoutes := sm.buildRoutes(gateway)
-	err := sm.router.BatchDeleteRoutes(oldRoutes, sm.logger)
-	duration := time.Since(start).Milliseconds()
-	
-	if err != nil {
-		sm.logger.Warn("batch delete failed, trying alternative cleanup", "gateway", gateway.String(), "error", err)
-		
-		// Strategy 2: Use system command to delete routes by gateway
-		if err2 := sm.forceDeleteRoutesByGateway(gateway); err2 != nil {
-			sm.logger.Error("all cleanup strategies failed", "gateway", gateway.String(), "batch_error", err, "force_error", err2)
-			return fmt.Errorf("critical: failed to delete old routes - both batch delete and force delete failed")
-		} else {
-			sm.logger.Info("alternative cleanup succeeded", "gateway", gateway.String(), "duration_ms", duration)
-		}
-	} else {
-		sm.logger.Info("batch delete succeeded", "gateway", gateway.String(), "duration_ms", duration)
-	}
-	
-	return nil
-}
 
 func (sm *ServiceManager) checkAndHandleGatewayChange() {
 	sm.mutex.Lock()
@@ -336,34 +279,6 @@ func (sm *ServiceManager) checkAndHandleGatewayChange() {
 	}
 }
 
-func (sm *ServiceManager) buildRoutes(gateway net.IP) []routing.Route {
-	var routes []routing.Route
-
-	networks := sm.chnRoutes.GetNetworks()
-	for _, netw := range networks {
-		routes = append(routes, routing.Route{
-			Network: netw,  // Now using value instead of pointer
-			Gateway: gateway,
-		})
-	}
-
-	dnsIPs := sm.chnDNS.GetIPs()
-	for _, ip := range dnsIPs {
-		var ipNet net.IPNet
-		if ip.To4() != nil {
-			ipNet = net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
-		} else {
-			ipNet = net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
-		}
-		
-		routes = append(routes, routing.Route{
-			Network: ipNet,
-			Gateway: gateway,
-		})
-	}
-
-	return routes
-}
 
 func (sm *ServiceManager) flushRouteCache() error {
 	// On macOS, flush the route cache to ensure changes take effect
@@ -376,59 +291,13 @@ func (sm *ServiceManager) flushRouteCache() error {
 	return nil
 }
 
-func (sm *ServiceManager) forceDeleteRoutesByGateway(gateway net.IP) error {
-	// Use system route command to delete routes by gateway
-	// This is more reliable than our native implementation
-	
-	sm.logger.Info("attempting force delete of routes", "gateway", gateway.String())
-	
-	// On macOS, we can use route delete commands
-	if runtime.GOOS == "darwin" {
-		return sm.forceDeleteRoutesByGatewayDarwin(gateway)
-	}
-	
-	return fmt.Errorf("force delete not implemented for %s", runtime.GOOS)
-}
 
-func (sm *ServiceManager) forceDeleteRoutesByGatewayDarwin(gateway net.IP) error {
-	// Try to delete Chinese IP ranges using system route command
-	
-	deletedCount := 0
-	totalAttempts := 0
-	
-	// Get Chinese IP ranges to delete
-	networks := sm.chnRoutes.GetNetworks()
-	
-	// Try to delete a sample of routes (first 200) 
-	maxAttempts := 200
-	for i, netw := range networks {
-		if i >= maxAttempts {
-			break
-		}
-		
-		totalAttempts++
-		
-		// Use route delete command
-		destination := netw.String()
-		delCmd := exec.Command("route", "delete", destination, gateway.String())
-		if err := delCmd.Run(); err == nil {
-			deletedCount++
-		}
-		// Continue even if individual routes fail - some might not exist
+// ipToString safely converts IP to string, handling nil
+func (sm *ServiceManager) ipToString(ip net.IP) string {
+	if ip == nil {
+		return "<nil>"
 	}
-	
-	sm.logger.Info("force delete completed", 
-		"gateway", gateway.String(), 
-		"deleted", deletedCount, 
-		"attempted", totalAttempts)
-	
-	// Consider it successful if we deleted at least some routes
-	// If we can't delete ANY routes, that's a problem
-	if deletedCount == 0 && totalAttempts > 0 {
-		return fmt.Errorf("could not delete any routes using system commands")
-	}
-	
-	return nil
+	return ip.String()
 }
 
 func (sm *ServiceManager) IsRunning() bool {
