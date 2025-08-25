@@ -5,6 +5,7 @@ package routing
 import (
 	"fmt"
 	"net"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -14,20 +15,20 @@ import (
 
 // BSD route message types
 const (
-	RTM_ADD     = 0x1
-	RTM_DELETE  = 0x2
-	RTM_CHANGE  = 0x3
-	RTM_GET     = 0x4
-	RTM_LOSING  = 0x5
+	RTM_ADD      = 0x1
+	RTM_DELETE   = 0x2
+	RTM_CHANGE   = 0x3
+	RTM_GET      = 0x4
+	RTM_LOSING   = 0x5
 	RTM_REDIRECT = 0x6
-	RTM_MISS    = 0x7
-	RTM_LOCK    = 0x8
-	RTM_OLDADD  = 0x9
-	RTM_OLDDEL  = 0xa
-	RTM_RESOLVE = 0xb
-	RTM_NEWADDR = 0xc
-	RTM_DELADDR = 0xd
-	RTM_IFINFO  = 0xe
+	RTM_MISS     = 0x7
+	RTM_LOCK     = 0x8
+	RTM_OLDADD   = 0x9
+	RTM_OLDDEL   = 0xa
+	RTM_RESOLVE  = 0xb
+	RTM_NEWADDR  = 0xc
+	RTM_DELADDR  = 0xd
+	RTM_IFINFO   = 0xe
 )
 
 // Route flags
@@ -125,22 +126,22 @@ func (rm *BSDRouteManager) deleteRouteNative(network *net.IPNet, gateway net.IP,
 func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	// For deletion, ensure we use the canonical network address (network IP masked with netmask)
 	networkAddr := network.IP.Mask(network.Mask)
-	
+
 	// Convert network and gateway to sockaddr structures
 	dst := ipToSockaddr(networkAddr)
 	gw := ipToSockaddr(gateway)
 	mask := maskToSockaddr(network.Mask)
-	
+
 	// Calculate message size
-	msgSize := int(unsafe.Sizeof(rtMsghdr{})) + 
+	msgSize := int(unsafe.Sizeof(rtMsghdr{})) +
 		int(dst.len) + int(gw.len) + int(mask.len)
-	
+
 	// Align to 4-byte boundary
 	msgSize = (msgSize + 3) &^ 3
-	
+
 	// Create message buffer
 	buf := make([]byte, msgSize)
-	
+
 	// Fill in route message header
 	hdr := (*rtMsghdr)(unsafe.Pointer(&buf[0]))
 	hdr.msglen = uint16(msgSize)
@@ -148,7 +149,7 @@ func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, g
 	hdr.msgtype = msgType
 	hdr.hdrlen = uint16(unsafe.Sizeof(rtMsghdr{}))
 	hdr.index = 0
-	
+
 	// Set appropriate flags based on operation type
 	if msgType == RTM_ADD {
 		hdr.flags = RTF_UP | RTF_GATEWAY | RTF_STATIC
@@ -156,40 +157,58 @@ func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, g
 		// For deletion, match the existing route flags exactly
 		hdr.flags = RTF_GATEWAY | RTF_STATIC
 	}
-	
+
 	hdr.addrs = RTA_DST | RTA_GATEWAY | RTA_NETMASK
 	hdr.pid = int32(syscall.Getpid())
-	hdr.seq = 1
 	
+	// Use atomic increment for sequence number to avoid conflicts
+	// This must be done within the mutex-protected section
+	rm.seqNum++
+	hdr.seq = rm.seqNum
+
 	// Add socket addresses
 	offset := int(unsafe.Sizeof(rtMsghdr{}))
-	
+
 	// Destination
 	copy(buf[offset:], (*[16]byte)(unsafe.Pointer(dst))[:dst.len])
 	offset += roundUp(int(dst.len))
-	
+
 	// Gateway
 	copy(buf[offset:], (*[16]byte)(unsafe.Pointer(gw))[:gw.len])
 	offset += roundUp(int(gw.len))
-	
+
 	// Netmask
 	copy(buf[offset:], (*[16]byte)(unsafe.Pointer(mask))[:mask.len])
-	
+
 	// Send message
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
-	
+
 	_, err := unix.Write(rm.socket, buf)
 	if err != nil {
-		log.Error("Failed to send route message: %v", err)
+		// Check if this is a route not found error (common during deletion)
+		errStr := fmt.Sprintf("%v", err)
+		if strings.Contains(errStr, "no such process") || strings.Contains(errStr, "no such file or directory") || strings.Contains(errStr, "ESRCH") || strings.Contains(errStr, "ENOENT") {
+			if msgType == RTM_DELETE {
+				log.Debug("Route not found during deletion (expected)", "error", err, "network", network.String(), "gateway", gateway.String())
+			} else {
+				log.Error("Failed to send route message", "error", err, "operation", "add", "network", network.String(), "gateway", gateway.String())
+			}
+		} else {
+			operation := "add"
+			if msgType == RTM_DELETE {
+				operation = "delete"
+			}
+			log.Error("Failed to send route message", "error", err, "operation", operation, "network", network.String(), "gateway", gateway.String())
+		}
 		return &RouteError{
 			Type:    ErrSystemCall,
-			Network: network,
+			Network: *network,  // Dereference pointer to get value
 			Gateway: gateway,
 			Cause:   fmt.Errorf("failed to send route message: %w", err),
 		}
 	}
-	
+
 	log.Debug("Sent route message", "buf", buf)
 	return nil
 }
@@ -200,11 +219,11 @@ func ipToSockaddr(ip net.IP) *sockaddrInet {
 		family: unix.AF_INET,
 		port:   0,
 	}
-	
+
 	if ip4 := ip.To4(); ip4 != nil {
 		copy(sa.addr[:], ip4)
 	}
-	
+
 	return sa
 }
 
@@ -214,14 +233,14 @@ func maskToSockaddr(mask net.IPMask) *sockaddrInet {
 		family: unix.AF_INET,
 		port:   0,
 	}
-	
+
 	if len(mask) == 4 {
 		copy(sa.addr[:], mask)
 	} else if len(mask) == 16 {
 		// IPv6 mask, convert to IPv4 if possible
 		copy(sa.addr[:], mask[12:])
 	}
-	
+
 	return sa
 }
 

@@ -21,7 +21,7 @@ type RouteManager interface {
 }
 
 type Route struct {
-	Network   *net.IPNet
+	Network   net.IPNet  // Changed from pointer to value
 	Gateway   net.IP
 	Interface string
 	Metric    int
@@ -29,7 +29,7 @@ type Route struct {
 
 type RouteError struct {
 	Type    ErrorType
-	Network *net.IPNet
+	Network net.IPNet  // Changed from pointer to value
 	Gateway net.IP
 	Cause   error
 }

@@ -342,18 +342,18 @@ func (sm *ServiceManager) buildRoutes(gateway net.IP) []routing.Route {
 	networks := sm.chnRoutes.GetNetworks()
 	for _, netw := range networks {
 		routes = append(routes, routing.Route{
-			Network: &netw,
+			Network: netw,  // Now using value instead of pointer
 			Gateway: gateway,
 		})
 	}
 
 	dnsIPs := sm.chnDNS.GetIPs()
 	for _, ip := range dnsIPs {
-		var ipNet *net.IPNet
+		var ipNet net.IPNet
 		if ip.To4() != nil {
-			ipNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
+			ipNet = net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
 		} else {
-			ipNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
+			ipNet = net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
 		}
 		
 		routes = append(routes, routing.Route{

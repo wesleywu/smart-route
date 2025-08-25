@@ -142,14 +142,14 @@ func (rm *LinuxRouteManager) addRouteDirect(network *net.IPNet, gateway net.IP) 
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			switch exitErr.ExitCode() {
 			case 1:
-				return &RouteError{Type: ErrPermission, Network: network, Gateway: gateway, Cause: err}
+				return &RouteError{Type: ErrPermission, Network: *network, Gateway: gateway, Cause: err}
 			case 2:
-				return &RouteError{Type: ErrInvalidRoute, Network: network, Gateway: gateway, Cause: err}
+				return &RouteError{Type: ErrInvalidRoute, Network: *network, Gateway: gateway, Cause: err}
 			default:
-				return &RouteError{Type: ErrSystemCall, Network: network, Gateway: gateway, Cause: err}
+				return &RouteError{Type: ErrSystemCall, Network: *network, Gateway: gateway, Cause: err}
 			}
 		}
-		return &RouteError{Type: ErrSystemCall, Network: network, Gateway: gateway, Cause: err}
+		return &RouteError{Type: ErrSystemCall, Network: *network, Gateway: gateway, Cause: err}
 	}
 	
 	return nil
@@ -166,7 +166,7 @@ func (rm *LinuxRouteManager) deleteRouteDirect(network *net.IPNet, gateway net.I
 				return nil
 			}
 		}
-		return &RouteError{Type: ErrSystemCall, Network: network, Gateway: gateway, Cause: err}
+		return &RouteError{Type: ErrSystemCall, Network: *network, Gateway: gateway, Cause: err}
 	}
 	
 	return nil
@@ -187,9 +187,9 @@ func (rm *LinuxRouteManager) batchOperation(routes []Route, action ActionType) e
 			var err error
 			switch action {
 			case ActionAdd:
-				err = rm.AddRoute(r.Network, r.Gateway)
+				err = rm.AddRoute(&r.Network, r.Gateway)
 			case ActionDelete:
-				err = rm.DeleteRoute(r.Network, r.Gateway)
+				err = rm.DeleteRoute(&r.Network, r.Gateway)
 			}
 
 			if err != nil {

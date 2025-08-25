@@ -57,9 +57,9 @@ func (rm *BSDRouteManager) processChunkSequentially(routes []Route, action Actio
 		var err error
 		switch action {
 		case ActionAdd:
-			err = rm.addRouteNative(route.Network, route.Gateway, log)
+			err = rm.addRouteNative(&route.Network, route.Gateway, log)
 		case ActionDelete:
-			err = rm.deleteRouteNative(route.Network, route.Gateway, log)
+			err = rm.deleteRouteNative(&route.Network, route.Gateway, log)
 		}
 		
 		if err != nil {
@@ -105,9 +105,9 @@ func (rm *BSDRouteManager) concurrentBatchOperation(routes []Route, action Actio
 			var err error
 			switch action {
 			case ActionAdd:
-				err = rm.addRouteNative(r.Network, r.Gateway, log)
+				err = rm.addRouteNative(&r.Network, r.Gateway, log)
 			case ActionDelete:
-				err = rm.deleteRouteNative(r.Network, r.Gateway, log)
+				err = rm.deleteRouteNative(&r.Network, r.Gateway, log)
 			}
 			
 			if err != nil {

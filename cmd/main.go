@@ -161,14 +161,14 @@ func runOnce(cmd *cobra.Command, args []string) {
 
 		// Clean up routes for previous gateway
 		log.Info("Cleaning up routes for previous gateway", "gateway", prevGateway.String())
-		if err := cleanupRoutesForGateway(rm, chnRoutes, chnDNS, prevGateway, log); err != nil {
+		if err := routing.CleanupRoutesForGateway(rm, chnRoutes, chnDNS, prevGateway, log); err != nil {
 			log.Warn("Failed to cleanup routes for previous gateway", "error", err)
 		}
 	} else if gatewayState.HasPreviousState() {
 		log.Info("Gateway unchanged", "gateway", gateway.String(), "interface", iface)
 		// Still clean up any existing routes to ensure consistency
 		log.Info("Cleaning up existing routes for consistency...")
-		if err := cleanupRoutesForGateway(rm, chnRoutes, chnDNS, gateway, log); err != nil {
+		if err := routing.CleanupRoutesForGateway(rm, chnRoutes, chnDNS, gateway, log); err != nil {
 			log.Debug("No existing routes found to cleanup", "error", err)
 		}
 	} else {
@@ -178,17 +178,17 @@ func runOnce(cmd *cobra.Command, args []string) {
 	var routes []routing.Route
 	for _, network := range chnRoutes.GetNetworks() {
 		routes = append(routes, routing.Route{
-			Network: &network,
+			Network: network,  // Now using value instead of pointer
 			Gateway: gateway,
 		})
 	}
 
 	for _, ip := range chnDNS.GetIPs() {
-		var network *net.IPNet
+		var network net.IPNet
 		if ip.To4() != nil {
-			network = &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
+			network = net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
 		} else {
-			network = &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
+			network = net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
 		}
 		routes = append(routes, routing.Route{
 			Network: network,
@@ -390,51 +390,8 @@ func testConfiguration(cmd *cobra.Command, args []string) {
 	} else {
 		fmt.Println("✅ Root privileges available")
 	}
+	
 
 	fmt.Println("✅ All tests passed")
 }
 
-func cleanupRoutesForGateway(rm routing.RouteManager, chnRoutes *config.IPSet, chnDNS *config.DNSServers, gateway net.IP, log *logger.Logger) error {
-	if gateway == nil {
-		return fmt.Errorf("gateway cannot be nil")
-	}
-
-	log.Info("Cleaning routes for specific gateway", "gateway", gateway.String())
-
-	// Build routes to delete for this specific gateway
-	var routesToDelete []routing.Route
-
-	// Add Chinese network routes
-	for _, network := range chnRoutes.GetNetworks() {
-		routesToDelete = append(routesToDelete, routing.Route{
-			Network: &network,
-			Gateway: gateway,
-		})
-	}
-
-	// Add Chinese DNS routes
-	for _, ip := range chnDNS.GetIPs() {
-		var network *net.IPNet
-		if ip.To4() != nil {
-			network = &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
-		} else {
-			network = &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
-		}
-		routesToDelete = append(routesToDelete, routing.Route{
-			Network: network,
-			Gateway: gateway,
-		})
-	}
-
-	// Try to delete these routes
-	if len(routesToDelete) > 0 {
-		log.Info("Attempting to delete routes", "gateway", gateway.String(), "count", len(routesToDelete))
-		err := rm.BatchDeleteRoutes(routesToDelete, log)
-		if err != nil {
-			return fmt.Errorf("failed to delete routes for gateway %s: %w", gateway.String(), err)
-		}
-		log.Info("Successfully cleaned routes", "gateway", gateway.String(), "count", len(routesToDelete))
-	}
-
-	return nil
-}

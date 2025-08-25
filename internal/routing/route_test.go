@@ -12,7 +12,7 @@ func TestRouteError(t *testing.T) {
 	
 	err := &RouteError{
 		Type:    ErrPermission,
-		Network: network,
+		Network: *network,  // Dereference pointer to get value
 		Gateway: gateway,
 		Cause:   nil,
 	}
@@ -28,7 +28,7 @@ func TestRouteError(t *testing.T) {
 	// Test retryable error
 	networkErr := &RouteError{
 		Type:    ErrNetwork,
-		Network: network,
+		Network: *network,  // Dereference pointer to get value
 		Gateway: gateway,
 		Cause:   nil,
 	}
@@ -130,7 +130,7 @@ func TestRoute(t *testing.T) {
 	gateway := net.ParseIP("192.168.1.1")
 	
 	route := Route{
-		Network:   network,
+		Network:   *network,  // Dereference pointer to get value
 		Gateway:   gateway,
 		Interface: "eth0",
 		Metric:    1,

@@ -20,6 +20,7 @@ type BSDRouteManager struct {
 	concurrencyLimit int
 	maxRetries       int
 	metrics          *Metrics
+	seqNum           int32  // Add sequence number counter
 }
 
 func newPlatformRouteManager(concurrencyLimit, maxRetries int) (RouteManager, error) {
@@ -37,6 +38,7 @@ func NewBSDRouteManager(concurrencyLimit, maxRetries int) (RouteManager, error) 
 		concurrencyLimit: concurrencyLimit,
 		maxRetries:       maxRetries,
 		metrics:          NewMetrics(),
+		seqNum:           1,  // Initialize sequence number
 	}, nil
 }
 
