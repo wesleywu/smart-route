@@ -143,83 +143,18 @@ func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.
 }
 
 func (rm *BSDRouteManager) addRouteDirect(network *net.IPNet, gateway net.IP) error {
-	rm.mutex.Lock()
-	defer rm.mutex.Unlock()
-
-	cmd := exec.Command("route", "add", "-net", network.String(), gateway.String())
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			switch exitErr.ExitCode() {
-			case 1:
-				return &RouteError{Type: ErrPermission, Network: network, Gateway: gateway, Cause: err}
-			case 2:
-				return &RouteError{Type: ErrInvalidRoute, Network: network, Gateway: gateway, Cause: err}
-			default:
-				return &RouteError{Type: ErrSystemCall, Network: network, Gateway: gateway, Cause: err}
-			}
-		}
-		return &RouteError{Type: ErrSystemCall, Network: network, Gateway: gateway, Cause: err}
-	}
-	
-	return nil
+	// Use native system call for better performance
+	return rm.addRouteNative(network, gateway)
 }
 
 func (rm *BSDRouteManager) deleteRouteDirect(network *net.IPNet, gateway net.IP) error {
-	rm.mutex.Lock()
-	defer rm.mutex.Unlock()
-
-	cmd := exec.Command("route", "delete", "-net", network.String(), gateway.String())
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if exitErr.ExitCode() == 1 {
-				return nil
-			}
-		}
-		return &RouteError{Type: ErrSystemCall, Network: network, Gateway: gateway, Cause: err}
-	}
-	
-	return nil
+	// Use native system call for better performance
+	return rm.deleteRouteNative(network, gateway)
 }
 
 func (rm *BSDRouteManager) batchOperation(routes []Route, action ActionType) error {
-	semaphore := make(chan struct{}, rm.concurrencyLimit)
-	var wg sync.WaitGroup
-	errChan := make(chan error, len(routes))
-
-	for _, route := range routes {
-		wg.Add(1)
-		go func(r Route) {
-			defer wg.Done()
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			var err error
-			switch action {
-			case ActionAdd:
-				err = rm.AddRoute(r.Network, r.Gateway)
-			case ActionDelete:
-				err = rm.DeleteRoute(r.Network, r.Gateway)
-			}
-
-			if err != nil {
-				errChan <- err
-			}
-		}(route)
-	}
-
-	wg.Wait()
-	close(errChan)
-
-	var errors []error
-	for err := range errChan {
-		errors = append(errors, err)
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("batch operation failed: %d errors", len(errors))
-	}
-
-	return nil
+	// Use optimized native batch operation for better performance
+	return rm.batchOperationNative(routes, action)
 }
 
 func parseDefaultRoute(output string) (net.IP, string, error) {
