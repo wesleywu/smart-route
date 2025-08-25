@@ -5,6 +5,7 @@ package routing
 import (
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -67,6 +68,19 @@ func (rm *BSDRouteManager) processChunkSequentially(routes []Route, action Actio
 					continue
 				}
 			}
+			
+			// Check if this is a "file exists" error for route addition
+			if action == ActionAdd && isRouteExistsError(err) {
+				// Route already exists, this is acceptable for batch add operations
+				continue
+			}
+			
+			// Check if this is a "no such file or directory" error for route deletion
+			if action == ActionDelete && isRouteNotFoundError(err) {
+				// Route doesn't exist, this is acceptable for batch delete operations
+				continue
+			}
+			
 			return err
 		}
 	}
@@ -95,6 +109,26 @@ func (rm *BSDRouteManager) concurrentBatchOperation(routes []Route, action Actio
 			}
 			
 			if err != nil {
+				// Apply the same error filtering logic as in sequential processing
+				if routeErr, ok := err.(*RouteError); ok {
+					if routeErr.Type == ErrInvalidRoute {
+						// Skip invalid routes but continue
+						return
+					}
+				}
+				
+				// Check if this is a "file exists" error for route addition
+				if action == ActionAdd && isRouteExistsError(err) {
+					// Route already exists, this is acceptable for batch add operations
+					return
+				}
+				
+				// Check if this is a "no such file or directory" error for route deletion
+				if action == ActionDelete && isRouteNotFoundError(err) {
+					// Route doesn't exist, this is acceptable for batch delete operations
+					return
+				}
+				
 				errChan <- err
 			}
 		}(route)
@@ -156,3 +190,32 @@ func (p *routeMessagePool) put(buf []byte) {
 }
 
 var globalMessagePool = newRouteMessagePool()
+
+// Helper functions to check for specific error conditions
+func isRouteExistsError(err error) bool {
+	if routeErr, ok := err.(*RouteError); ok {
+		if routeErr.Type == ErrSystemCall && routeErr.Cause != nil {
+			// Check for "file exists" error
+			causeStr := fmt.Sprintf("%v", routeErr.Cause)
+			return strings.Contains(causeStr, "file exists") ||
+				   strings.Contains(causeStr, "EEXIST")
+		}
+	}
+	// Also check the raw error message
+	errStr := fmt.Sprintf("%v", err)
+	return strings.Contains(errStr, "file exists") || strings.Contains(errStr, "EEXIST")
+}
+
+func isRouteNotFoundError(err error) bool {
+	if routeErr, ok := err.(*RouteError); ok {
+		if routeErr.Type == ErrSystemCall && routeErr.Cause != nil {
+			// Check for "no such file or directory" error
+			causeStr := fmt.Sprintf("%v", routeErr.Cause)
+			return strings.Contains(causeStr, "no such file or directory") ||
+				   strings.Contains(causeStr, "ENOENT")
+		}
+	}
+	// Also check the raw error message
+	errStr := fmt.Sprintf("%v", err)
+	return strings.Contains(errStr, "no such file or directory") || strings.Contains(errStr, "ENOENT")
+}
