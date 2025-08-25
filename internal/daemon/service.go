@@ -211,7 +211,7 @@ func (sm *ServiceManager) handleGatewayChange(newGW net.IP, newIface string) err
 	sm.mutex.Unlock()
 
 	// Use unified route switch logic
-	if err := sm.routeSwitch.SwitchToGateway(oldGW, newGW, newIface); err != nil {
+	if err := sm.routeSwitch.SetupRoutes(newGW, newIface); err != nil {
 		sm.logger.Error("failed to switch routes", "error", err)
 		return err
 	}
@@ -238,7 +238,7 @@ func (sm *ServiceManager) handleGatewayChange(newGW net.IP, newIface string) err
 
 func (sm *ServiceManager) setupInitialRoutes() error {
 	// Use unified route switch logic for initial setup
-	return sm.routeSwitch.SetupInitialRoutes(sm.currentGW, sm.currentIface)
+	return sm.routeSwitch.SetupRoutes(sm.currentGW, sm.currentIface)
 }
 
 

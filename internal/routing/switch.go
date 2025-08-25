@@ -12,12 +12,10 @@ import (
 // RouteSwitch handles the complete route switching logic used by both one-time and daemon modes
 type RouteSwitch struct {
 	rm            RouteManager
+	cleanupMgr    *CleanupManager
+	logger        *logger.Logger
 	chnRoutes     *config.IPSet
 	chnDNS        *config.DNSServers
-	logger        *logger.Logger
-	cleanupMgr    *CleanupManager
-	chnRoutesFile string
-	chnDNSFile    string
 }
 
 // NewRouteSwitch creates a new route switch handler
@@ -33,72 +31,39 @@ func NewRouteSwitch(rm RouteManager, chnRoutes *config.IPSet, chnDNS *config.DNS
 		chnDNS:        chnDNS,
 		logger:        logger,
 		cleanupMgr:    cleanupMgr,
-		chnRoutesFile: chnRoutesFile,
-		chnDNSFile:    chnDNSFile,
 	}, nil
 }
 
-// SwitchToGateway performs complete route switching from old gateway to new gateway
-// This is the unified logic used by both one-time and daemon modes
-func (rs *RouteSwitch) SwitchToGateway(oldGW, newGW net.IP, newIface string) error {
-	if newGW == nil {
-		return fmt.Errorf("new gateway cannot be nil")
+// SetupRoutes performs complete route reset - used by both one-time and daemon modes
+// This is the unified logic: always cleanup ALL managed routes, then setup for current gateway
+func (rs *RouteSwitch) SetupRoutes(gateway net.IP, iface string) error {
+	if gateway == nil {
+		return fmt.Errorf("gateway cannot be nil")
 	}
 
-	rs.logger.Info("starting route switch",
-		"old_gateway", rs.ipToString(oldGW),
-		"new_gateway", newGW.String(),
-		"new_interface", newIface)
+	rs.logger.Info("performing complete route reset",
+		"gateway", gateway.String(),
+		"interface", iface)
 
-	// Phase 1: Clean up ALL routes for managed networks (completely gateway-independent)
+	// Phase 1: Clean up ALL managed routes (completely gateway-independent)
 	rs.logger.Info("phase 1: cleaning up all managed routes")
 	if err := rs.cleanupAllManagedRoutes(); err != nil {
 		rs.logger.Error("failed to cleanup managed routes", "error", err)
 		return fmt.Errorf("failed to cleanup managed routes: %w", err)
 	}
 
-	// Phase 2: Set up new routes
-	rs.logger.Info("phase 2: setting up new routes")
-	if err := rs.setupRoutes(newGW); err != nil {
-		rs.logger.Error("failed to setup new routes", "new_gateway", newGW.String(), "error", err)
-		
-		// Try to restore old routes if possible
-		if oldGW != nil && !oldGW.Equal(newGW) {
-			rs.logger.Info("attempting to restore old routes as fallback")
-			if restoreErr := rs.setupRoutes(oldGW); restoreErr != nil {
-				rs.logger.Error("failed to restore old routes", "error", restoreErr)
-			}
-		}
-		
-		return fmt.Errorf("failed to setup new routes: %w", err)
+	// Phase 2: Set up routes for current gateway
+	rs.logger.Info("phase 2: setting up routes for current gateway")
+	if err := rs.setupRoutes(gateway); err != nil {
+		rs.logger.Error("failed to setup routes for current gateway", "gateway", gateway.String(), "error", err)
+		return fmt.Errorf("failed to setup routes for current gateway: %w", err)
 	}
 
-	rs.logger.Info("route switch completed successfully",
-		"old_gateway", rs.ipToString(oldGW),
-		"new_gateway", newGW.String(),
-		"new_interface", newIface)
-
-	return nil
-}
-
-// SetupInitialRoutes sets up routes for initial setup (first time)
-func (rs *RouteSwitch) SetupInitialRoutes(gateway net.IP, iface string) error {
-	if gateway == nil {
-		return fmt.Errorf("gateway cannot be nil")
-	}
-
-	rs.logger.Info("setting up initial routes",
+	rs.logger.Info("route reset completed successfully",
 		"gateway", gateway.String(),
 		"interface", iface)
 
-	// Clean up ALL existing managed routes first (completely gateway-independent)
-	if err := rs.cleanupAllManagedRoutes(); err != nil {
-		rs.logger.Debug("no existing managed routes found during initial setup")
-		// This is not an error for initial setup
-	}
-
-	// Set up new routes
-	return rs.setupRoutes(gateway)
+	return nil
 }
 
 // cleanupAllManagedRoutes removes ALL routes in the system that match networks from config files
@@ -176,10 +141,3 @@ func (rs *RouteSwitch) buildRoutes(gateway net.IP) []Route {
 	return routes
 }
 
-// ipToString safely converts IP to string, handling nil
-func (rs *RouteSwitch) ipToString(ip net.IP) string {
-	if ip == nil {
-		return "<nil>"
-	}
-	return ip.String()
-}

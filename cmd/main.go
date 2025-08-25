@@ -141,13 +141,6 @@ func runOnce(cmd *cobra.Command, args []string) {
 
 	log.Info("Configuration loaded", "chn_routes", chnRoutes.Size(), "chn_dns", chnDNS.Size())
 
-	// Load gateway state to check for changes
-	log.Info("Checking gateway state...")
-	gatewayState, err := config.LoadGatewayState("")
-	if err != nil {
-		log.Warn("Failed to load gateway state", "error", err)
-		gatewayState = &config.GatewayState{}
-	}
 
 	// Create unified route switch handler
 	routeSwitch, err := routing.NewRouteSwitch(rm, chnRoutes, chnDNS, log, cfg.ChnRouteFile, cfg.ChnDNSFile)
@@ -156,46 +149,17 @@ func runOnce(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Handle route switching based on gateway state
-	if gatewayState.IsGatewayChanged(gateway, iface) {
-		prevGateway, prevIface := gatewayState.GetPreviousGateway()
-		log.Info("Gateway change detected",
-			"previous_gateway", prevGateway.String(),
-			"previous_interface", prevIface,
-			"current_gateway", gateway.String(),
-			"current_interface", iface)
+	// One-time mode: Always perform complete route reset
+	// This ensures consistent behavior and clean state for every run
+	log.Info("One-time mode: performing complete route reset", 
+		"current_gateway", gateway.String(), "interface", iface)
 
-		// Use unified route switch logic
-		if err := routeSwitch.SwitchToGateway(prevGateway, gateway, iface); err != nil {
-			log.Error("Failed to switch routes", "error", err)
-			os.Exit(1)
-		}
-	} else if gatewayState.HasPreviousState() {
-		log.Info("Gateway unchanged", "gateway", gateway.String(), "interface", iface)
-		// Use unified setup logic for consistency
-		if err := routeSwitch.SetupInitialRoutes(gateway, iface); err != nil {
-			log.Error("Failed to setup routes", "error", err)
-			os.Exit(1)
-		}
-	} else {
-		log.Info("First time setup", "gateway", gateway.String(), "interface", iface)
-		// Use unified initial setup logic
-		if err := routeSwitch.SetupInitialRoutes(gateway, iface); err != nil {
-			log.Error("Failed to setup initial routes", "error", err)
-			os.Exit(1)
-		}
+	// Always use the unified logic: cleanup all managed routes, then setup for current gateway
+	if err := routeSwitch.SetupRoutes(gateway, iface); err != nil {
+		log.Error("Failed to setup routes", "error", err)
+		os.Exit(1)
 	}
 
-	// Calculate total routes for gateway state
-	totalRoutes := chnRoutes.Size() + chnDNS.Size()
-
-	// Update gateway state after successful setup
-	gatewayState.Update(gateway, iface, totalRoutes)
-	if err := gatewayState.Save(""); err != nil {
-		log.Warn("Failed to save gateway state", "error", err)
-	} else {
-		log.Info("Gateway state saved", "gateway", gateway.String(), "routes", totalRoutes)
-	}
 
 	log.Info("Route setup completed successfully")
 }
