@@ -5,13 +5,15 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/wesleywu/update-routes-native/internal/logger"
 )
 
 type RouteManager interface {
-	AddRoute(network *net.IPNet, gateway net.IP) error
-	DeleteRoute(network *net.IPNet, gateway net.IP) error
-	BatchAddRoutes(routes []Route) error
-	BatchDeleteRoutes(routes []Route) error
+	AddRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error
+	DeleteRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error
+	BatchAddRoutes(routes []Route, log *logger.Logger) error
+	BatchDeleteRoutes(routes []Route, log *logger.Logger) error
 	GetDefaultGateway() (net.IP, string, error)
 	ListRoutes() ([]Route, error)
 	FlushRoutes(gateway net.IP) error
@@ -100,10 +102,10 @@ func NewWorkerPool(workers int) *WorkerPool {
 	}
 }
 
-func (wp *WorkerPool) Start(rm RouteManager) {
+func (wp *WorkerPool) Start(rm RouteManager, log *logger.Logger) {
 	for i := 0; i < wp.workers; i++ {
 		wp.wg.Add(1)
-		go wp.worker(rm)
+		go wp.worker(rm, log)
 	}
 }
 
@@ -121,7 +123,7 @@ func (wp *WorkerPool) Results() <-chan RouteResult {
 	return wp.results
 }
 
-func (wp *WorkerPool) worker(rm RouteManager) {
+func (wp *WorkerPool) worker(rm RouteManager, log *logger.Logger) {
 	defer wp.wg.Done()
 	
 	for job := range wp.jobs {
@@ -129,9 +131,9 @@ func (wp *WorkerPool) worker(rm RouteManager) {
 		
 		switch job.Action {
 		case ActionAdd:
-			err = rm.AddRoute(job.Network, job.Gateway)
+			err = rm.AddRoute(job.Network, job.Gateway, log)
 		case ActionDelete:
-			err = rm.DeleteRoute(job.Network, job.Gateway)
+			err = rm.DeleteRoute(job.Network, job.Gateway, log)
 		}
 		
 		result := RouteResult{

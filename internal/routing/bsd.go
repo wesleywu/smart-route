@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wesleywu/update-routes-native/internal/logger"
 	"golang.org/x/sys/unix"
 )
 
@@ -39,20 +40,20 @@ func NewBSDRouteManager(concurrencyLimit, maxRetries int) (RouteManager, error) 
 	}, nil
 }
 
-func (rm *BSDRouteManager) AddRoute(network *net.IPNet, gateway net.IP) error {
-	return rm.addRouteWithRetry(network, gateway)
+func (rm *BSDRouteManager) AddRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
+	return rm.addRouteWithRetry(network, gateway, log)
 }
 
-func (rm *BSDRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP) error {
-	return rm.deleteRouteWithRetry(network, gateway)
+func (rm *BSDRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
+	return rm.deleteRouteWithRetry(network, gateway, log)
 }
 
-func (rm *BSDRouteManager) BatchAddRoutes(routes []Route) error {
-	return rm.batchOperation(routes, ActionAdd)
+func (rm *BSDRouteManager) BatchAddRoutes(routes []Route, log *logger.Logger) error {
+	return rm.batchOperation(routes, ActionAdd, log)
 }
 
-func (rm *BSDRouteManager) BatchDeleteRoutes(routes []Route) error {
-	return rm.batchOperation(routes, ActionDelete)
+func (rm *BSDRouteManager) BatchDeleteRoutes(routes []Route, log *logger.Logger) error {
+	return rm.batchOperation(routes, ActionDelete, log)
 }
 
 func (rm *BSDRouteManager) GetDefaultGateway() (net.IP, string, error) {
@@ -93,12 +94,12 @@ func (rm *BSDRouteManager) Close() error {
 	return unix.Close(rm.socket)
 }
 
-func (rm *BSDRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP) error {
+func (rm *BSDRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	var lastErr error
 	start := time.Now()
 	
 	for attempt := 0; attempt < rm.maxRetries; attempt++ {
-		err := rm.addRouteDirect(network, gateway)
+		err := rm.addRouteDirect(network, gateway, log)
 		if err == nil {
 			rm.metrics.RecordOperation(time.Since(start), true)
 			return nil
@@ -117,12 +118,12 @@ func (rm *BSDRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP)
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }
 
-func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.IP) error {
+func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	var lastErr error
 	start := time.Now()
 	
 	for attempt := 0; attempt < rm.maxRetries; attempt++ {
-		err := rm.deleteRouteDirect(network, gateway)
+		err := rm.deleteRouteDirect(network, gateway, log)
 		if err == nil {
 			rm.metrics.RecordOperation(time.Since(start), true)
 			return nil
@@ -141,19 +142,19 @@ func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }
 
-func (rm *BSDRouteManager) addRouteDirect(network *net.IPNet, gateway net.IP) error {
+func (rm *BSDRouteManager) addRouteDirect(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	// Use native system call for better performance
-	return rm.addRouteNative(network, gateway)
+	return rm.addRouteNative(network, gateway, log)
 }
 
-func (rm *BSDRouteManager) deleteRouteDirect(network *net.IPNet, gateway net.IP) error {
+func (rm *BSDRouteManager) deleteRouteDirect(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	// Use native system call for better performance
-	return rm.deleteRouteNative(network, gateway)
+	return rm.deleteRouteNative(network, gateway, log)
 }
 
-func (rm *BSDRouteManager) batchOperation(routes []Route, action ActionType) error {
+func (rm *BSDRouteManager) batchOperation(routes []Route, action ActionType, log *logger.Logger) error {
 	// Use optimized native batch operation for better performance
-	return rm.batchOperationNative(routes, action)
+	return rm.batchOperationNative(routes, action, log)
 }
 
 func parseDefaultRoute(output string) (net.IP, string, error) {

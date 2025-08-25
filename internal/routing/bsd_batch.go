@@ -8,10 +8,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wesleywu/update-routes-native/internal/logger"
 )
 
 // High-performance batch operation using native system calls
-func (rm *BSDRouteManager) batchOperationNative(routes []Route, action ActionType) error {
+func (rm *BSDRouteManager) batchOperationNative(routes []Route, action ActionType, log *logger.Logger) error {
 	if len(routes) == 0 {
 		return nil
 	}
@@ -20,14 +22,14 @@ func (rm *BSDRouteManager) batchOperationNative(routes []Route, action ActionTyp
 	
 	// Use optimized batch processing for large route sets
 	if len(routes) > 1000 {
-		return rm.largeBatchOperation(routes, action)
+		return rm.largeBatchOperation(routes, action, log)
 	}
 	
 	// Use concurrent processing for smaller batches
-	return rm.concurrentBatchOperation(routes, action, start)
+	return rm.concurrentBatchOperation(routes, action, start, log)
 }
 
-func (rm *BSDRouteManager) largeBatchOperation(routes []Route, action ActionType) error {
+func (rm *BSDRouteManager) largeBatchOperation(routes []Route, action ActionType, log *logger.Logger) error {
 	// For very large batches (3000+ routes), use a different strategy
 	// Process in chunks to avoid overwhelming the kernel
 	chunkSize := 500 // Process 500 routes at a time
@@ -39,7 +41,7 @@ func (rm *BSDRouteManager) largeBatchOperation(routes []Route, action ActionType
 		}
 		
 		chunk := routes[i:end]
-		if err := rm.processChunkSequentially(chunk, action); err != nil {
+		if err := rm.processChunkSequentially(chunk, action, log); err != nil {
 			return fmt.Errorf("failed to process chunk %d-%d: %w", i, end-1, err)
 		}
 		
@@ -50,14 +52,14 @@ func (rm *BSDRouteManager) largeBatchOperation(routes []Route, action ActionType
 	return nil
 }
 
-func (rm *BSDRouteManager) processChunkSequentially(routes []Route, action ActionType) error {
+func (rm *BSDRouteManager) processChunkSequentially(routes []Route, action ActionType, log *logger.Logger) error {
 	for _, route := range routes {
 		var err error
 		switch action {
 		case ActionAdd:
-			err = rm.addRouteNative(route.Network, route.Gateway)
+			err = rm.addRouteNative(route.Network, route.Gateway, log)
 		case ActionDelete:
-			err = rm.deleteRouteNative(route.Network, route.Gateway)
+			err = rm.deleteRouteNative(route.Network, route.Gateway, log)
 		}
 		
 		if err != nil {
@@ -88,7 +90,7 @@ func (rm *BSDRouteManager) processChunkSequentially(routes []Route, action Actio
 	return nil
 }
 
-func (rm *BSDRouteManager) concurrentBatchOperation(routes []Route, action ActionType, start time.Time) error {
+func (rm *BSDRouteManager) concurrentBatchOperation(routes []Route, action ActionType, start time.Time, log *logger.Logger) error {
 	semaphore := make(chan struct{}, rm.concurrencyLimit)
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(routes))
@@ -103,9 +105,9 @@ func (rm *BSDRouteManager) concurrentBatchOperation(routes []Route, action Actio
 			var err error
 			switch action {
 			case ActionAdd:
-				err = rm.addRouteNative(r.Network, r.Gateway)
+				err = rm.addRouteNative(r.Network, r.Gateway, log)
 			case ActionDelete:
-				err = rm.deleteRouteNative(r.Network, r.Gateway)
+				err = rm.deleteRouteNative(r.Network, r.Gateway, log)
 			}
 			
 			if err != nil {
@@ -154,14 +156,14 @@ func (rm *BSDRouteManager) concurrentBatchOperation(routes []Route, action Actio
 }
 
 // Optimized single route operation with minimal overhead
-func (rm *BSDRouteManager) fastAddRoute(network *net.IPNet, gateway net.IP) error {
+func (rm *BSDRouteManager) fastAddRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	// Skip retry logic for batch operations to maximize speed
-	return rm.addRouteNative(network, gateway)
+	return rm.addRouteNative(network, gateway, log)
 }
 
-func (rm *BSDRouteManager) fastDeleteRoute(network *net.IPNet, gateway net.IP) error {
+func (rm *BSDRouteManager) fastDeleteRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	// Skip retry logic for batch operations to maximize speed  
-	return rm.deleteRouteNative(network, gateway)
+	return rm.deleteRouteNative(network, gateway, log)
 }
 
 // Pre-allocate and reuse route message buffers for better performance

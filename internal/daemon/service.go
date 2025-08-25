@@ -260,7 +260,7 @@ func (sm *ServiceManager) setupRoutesForGateway(gateway net.IP) error {
 	
 	sm.logger.Info("setting up routes", "gateway", gateway.String(), "total", total)
 
-	err := sm.router.BatchAddRoutes(routes)
+	err := sm.router.BatchAddRoutes(routes, sm.logger)
 	duration := time.Since(start).Milliseconds()
 
 	if err != nil {
@@ -279,7 +279,7 @@ func (sm *ServiceManager) flushOldRoutes(gateway net.IP) error {
 	
 	// Strategy 1: Try to delete specific routes we know we added
 	oldRoutes := sm.buildRoutes(gateway)
-	err := sm.router.BatchDeleteRoutes(oldRoutes)
+	err := sm.router.BatchDeleteRoutes(oldRoutes, sm.logger)
 	duration := time.Since(start).Milliseconds()
 	
 	if err != nil {

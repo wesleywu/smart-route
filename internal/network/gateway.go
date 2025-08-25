@@ -259,7 +259,6 @@ func calculateGatewayFromSubnet(ipnet *net.IPNet) net.IP {
 	copy(gateway, network)
 	gateway[3] = 1
 	
-	fmt.Printf("DEBUG: IP %s in subnet %s -> calculated gateway %s\n", ip.String(), ipnet.String(), gateway.String())
 	
 	return gateway
 }

@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/wesleywu/update-routes-native/internal/logger"
 	"golang.org/x/sys/unix"
 )
 
@@ -113,15 +114,15 @@ type sockaddrInet struct {
 	zero   [8]int8
 }
 
-func (rm *BSDRouteManager) addRouteNative(network *net.IPNet, gateway net.IP) error {
-	return rm.sendRouteMessage(RTM_ADD, network, gateway)
+func (rm *BSDRouteManager) addRouteNative(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
+	return rm.sendRouteMessage(RTM_ADD, network, gateway, log)
 }
 
-func (rm *BSDRouteManager) deleteRouteNative(network *net.IPNet, gateway net.IP) error {
-	return rm.sendRouteMessage(RTM_DELETE, network, gateway)
+func (rm *BSDRouteManager) deleteRouteNative(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
+	return rm.sendRouteMessage(RTM_DELETE, network, gateway, log)
 }
 
-func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, gateway net.IP) error {
+func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	// For deletion, ensure we use the canonical network address (network IP masked with netmask)
 	networkAddr := network.IP.Mask(network.Mask)
 	
@@ -180,6 +181,7 @@ func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, g
 	
 	_, err := unix.Write(rm.socket, buf)
 	if err != nil {
+		log.Error("Failed to send route message: %v", err)
 		return &RouteError{
 			Type:    ErrSystemCall,
 			Network: network,
@@ -188,6 +190,7 @@ func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, g
 		}
 	}
 	
+	log.Debug("Sent route message", "buf", buf)
 	return nil
 }
 

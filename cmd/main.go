@@ -19,6 +19,7 @@ var (
 	
 	configFile string
 	silentMode bool
+	verboseMode bool
 )
 
 func main() {
@@ -73,6 +74,7 @@ func main() {
 
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Configuration file path")
 	rootCmd.PersistentFlags().BoolVarP(&silentMode, "silent", "s", false, "Silent mode (no output)")
+	rootCmd.PersistentFlags().BoolVarP(&verboseMode, "verbose", "v", false, "Verbose mode (debug level logging)")
 
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(installCmd)
@@ -96,6 +98,10 @@ func runOnce(cmd *cobra.Command, args []string) {
 
 	if silentMode {
 		cfg.SilentMode = true
+	}
+
+	if verboseMode {
+		cfg.LogLevel = "debug"
 	}
 
 	log := logger.New(cfg)
@@ -191,7 +197,7 @@ func runOnce(cmd *cobra.Command, args []string) {
 	}
 
 	log.Info("Setting up routes", "gateway", gateway.String(), "total", len(routes))
-	if err := rm.BatchAddRoutes(routes); err != nil {
+	if err := rm.BatchAddRoutes(routes, log); err != nil {
 		log.Error("Failed to setup routes", "error", err)
 		os.Exit(1)
 	}
@@ -217,6 +223,11 @@ func runDaemon(cmd *cobra.Command, args []string) {
 	if silentMode {
 		cfg.SilentMode = true
 	}
+
+	if verboseMode {
+		cfg.LogLevel = "debug"
+	}
+	
 	cfg.DaemonMode = true
 
 	log := logger.New(cfg)
@@ -328,7 +339,7 @@ func showVersion(cmd *cobra.Command, args []string) {
 	fmt.Printf("Smart Route Manager v%s\n", version)
 	fmt.Printf("Runtime: %s\n", runtime.Version())
 	fmt.Printf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
-	
+
 	gateway, iface, err := network.GetDefaultGateway()
 	if err == nil {
 		fmt.Printf("Current Gateway: %s (%s)\n", gateway.String(), iface)
@@ -341,6 +352,13 @@ func testConfiguration(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "❌ Failed to load config: %v\n", err)
 		os.Exit(1)
 	}
+
+	if verboseMode {
+		cfg.LogLevel = "debug"
+	}
+
+	log := logger.New(cfg)
+	log.Debug("Starting configuration test")
 	fmt.Println("✅ Configuration loaded successfully")
 
 	chnRoutes, err := config.LoadChnRoutes(cfg.ChnRouteFile)
@@ -348,6 +366,7 @@ func testConfiguration(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "❌ Failed to load Chinese routes: %v\n", err)
 		os.Exit(1)
 	}
+	log.Debug("Chinese routes loading details", "file", cfg.ChnRouteFile, "networks", chnRoutes.Size())
 	fmt.Printf("✅ Chinese routes loaded: %d networks\n", chnRoutes.Size())
 
 	chnDNS, err := config.LoadChnDNS(cfg.ChnDNSFile)
@@ -355,6 +374,7 @@ func testConfiguration(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "❌ Failed to load Chinese DNS: %v\n", err)
 		os.Exit(1)
 	}
+	log.Debug("Chinese DNS loading details", "file", cfg.ChnDNSFile, "servers", chnDNS.Size())
 	fmt.Printf("✅ Chinese DNS loaded: %d servers\n", chnDNS.Size())
 
 	gateway, iface, err := network.GetDefaultGateway()
@@ -362,6 +382,7 @@ func testConfiguration(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "❌ Failed to get default gateway: %v\n", err)
 		os.Exit(1)
 	}
+	log.Debug("Gateway detection details", "gateway", gateway.String(), "interface", iface)
 	fmt.Printf("✅ Default gateway: %s (%s)\n", gateway.String(), iface)
 
 	if os.Getuid() != 0 {
@@ -377,12 +398,12 @@ func cleanupRoutesForGateway(rm routing.RouteManager, chnRoutes *config.IPSet, c
 	if gateway == nil {
 		return fmt.Errorf("gateway cannot be nil")
 	}
-	
+
 	log.Info("Cleaning routes for specific gateway", "gateway", gateway.String())
-	
+
 	// Build routes to delete for this specific gateway
 	var routesToDelete []routing.Route
-	
+
 	// Add Chinese network routes
 	for _, network := range chnRoutes.GetNetworks() {
 		routesToDelete = append(routesToDelete, routing.Route{
@@ -390,8 +411,8 @@ func cleanupRoutesForGateway(rm routing.RouteManager, chnRoutes *config.IPSet, c
 			Gateway: gateway,
 		})
 	}
-	
-	// Add Chinese DNS routes  
+
+	// Add Chinese DNS routes
 	for _, ip := range chnDNS.GetIPs() {
 		var network *net.IPNet
 		if ip.To4() != nil {
@@ -404,17 +425,16 @@ func cleanupRoutesForGateway(rm routing.RouteManager, chnRoutes *config.IPSet, c
 			Gateway: gateway,
 		})
 	}
-	
+
 	// Try to delete these routes
 	if len(routesToDelete) > 0 {
 		log.Info("Attempting to delete routes", "gateway", gateway.String(), "count", len(routesToDelete))
-		err := rm.BatchDeleteRoutes(routesToDelete)
+		err := rm.BatchDeleteRoutes(routesToDelete, log)
 		if err != nil {
 			return fmt.Errorf("failed to delete routes for gateway %s: %w", gateway.String(), err)
 		}
 		log.Info("Successfully cleaned routes", "gateway", gateway.String(), "count", len(routesToDelete))
 	}
-	
+
 	return nil
 }
-
