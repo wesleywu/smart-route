@@ -122,8 +122,11 @@ func (rm *BSDRouteManager) deleteRouteNative(network *net.IPNet, gateway net.IP)
 }
 
 func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, gateway net.IP) error {
+	// For deletion, ensure we use the canonical network address (network IP masked with netmask)
+	networkAddr := network.IP.Mask(network.Mask)
+	
 	// Convert network and gateway to sockaddr structures
-	dst := ipToSockaddr(network.IP)
+	dst := ipToSockaddr(networkAddr)
 	gw := ipToSockaddr(gateway)
 	mask := maskToSockaddr(network.Mask)
 	
@@ -144,7 +147,15 @@ func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, g
 	hdr.msgtype = msgType
 	hdr.hdrlen = uint16(unsafe.Sizeof(rtMsghdr{}))
 	hdr.index = 0
-	hdr.flags = RTF_UP | RTF_GATEWAY | RTF_STATIC
+	
+	// Set appropriate flags based on operation type
+	if msgType == RTM_ADD {
+		hdr.flags = RTF_UP | RTF_GATEWAY | RTF_STATIC
+	} else if msgType == RTM_DELETE {
+		// For deletion, match the existing route flags exactly
+		hdr.flags = RTF_GATEWAY | RTF_STATIC
+	}
+	
 	hdr.addrs = RTA_DST | RTA_GATEWAY | RTA_NETMASK
 	hdr.pid = int32(syscall.Getpid())
 	hdr.seq = 1

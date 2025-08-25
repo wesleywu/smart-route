@@ -34,7 +34,7 @@ func NewDefaultConfig() *Config {
 		DaemonMode:       false,
 		ChnRouteFile:     "configs/chnroute.txt",
 		ChnDNSFile:       "configs/chdns.txt",
-		MonitorInterval:  5 * time.Second,
+		MonitorInterval:  2 * time.Second, // 备份轮询，实际响应由实时事件触发
 		RetryAttempts:    3,
 		RouteTimeout:     30 * time.Second,
 		ConcurrencyLimit: 50,

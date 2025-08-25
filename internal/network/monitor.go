@@ -19,6 +19,7 @@ type NetworkMonitor struct {
 	mutex          sync.RWMutex
 	isRunning      bool
 	pollInterval   time.Duration
+	lastRouteCheck time.Time
 }
 
 type NetworkEvent struct {
@@ -167,12 +168,20 @@ func (nm *NetworkMonitor) monitorPolling() {
 func (nm *NetworkMonitor) checkGatewayChange() {
 	currentGateway, currentIface, err := GetDefaultGateway()
 	if err != nil {
+		// Add debug info - this should rarely happen now
+		fmt.Printf("DEBUG: Failed to get gateway during check: %v\n", err)
 		return
 	}
 
 	nm.mutex.Lock()
+	oldGateway := nm.gateway
+	oldIface := nm.defaultIface
 	gatewayChanged := !nm.gateway.Equal(currentGateway)
 	interfaceChanged := nm.defaultIface != currentIface
+	
+	// Add debug logging
+	fmt.Printf("DEBUG: Gateway check - Old: %s (%s), Current: %s (%s), Changed: %t\n", 
+		oldGateway.String(), oldIface, currentGateway.String(), currentIface, gatewayChanged || interfaceChanged)
 	
 	if gatewayChanged || interfaceChanged {
 		nm.gateway = currentGateway
@@ -201,10 +210,22 @@ func (nm *NetworkMonitor) parseRouteMessage(data []byte) *NetworkEvent {
 		return nil
 	}
 
-	return &NetworkEvent{
-		Type:      AddressChanged,
-		Interface: "",
-		Gateway:   nil,
-		Timestamp: time.Now(),
+	// Rate limit: only trigger checks every 200ms to avoid spam
+	nm.mutex.Lock()
+	now := time.Now()
+	if nm.lastRouteCheck.IsZero() || now.Sub(nm.lastRouteCheck) > 200*time.Millisecond {
+		nm.lastRouteCheck = now
+		nm.mutex.Unlock()
+		
+		// Trigger immediate gateway check when route messages are received
+		go func() {
+			// Small delay to allow network stack to settle
+			time.Sleep(100 * time.Millisecond)
+			nm.checkGatewayChange()
+		}()
+	} else {
+		nm.mutex.Unlock()
 	}
+
+	return nil // Don't return the unparsed event to avoid spam
 }

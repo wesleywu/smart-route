@@ -207,15 +207,25 @@ func isRouteExistsError(err error) bool {
 }
 
 func isRouteNotFoundError(err error) bool {
+	// Always check the complete error message first
+	errStr := fmt.Sprintf("%v", err)
+	if strings.Contains(errStr, "no such file or directory") ||
+	   strings.Contains(errStr, "no such process") ||
+	   strings.Contains(errStr, "ENOENT") ||
+	   strings.Contains(errStr, "ESRCH") {
+		return true
+	}
+	
+	// Also check structured RouteError
 	if routeErr, ok := err.(*RouteError); ok {
 		if routeErr.Type == ErrSystemCall && routeErr.Cause != nil {
-			// Check for "no such file or directory" error
 			causeStr := fmt.Sprintf("%v", routeErr.Cause)
 			return strings.Contains(causeStr, "no such file or directory") ||
-				   strings.Contains(causeStr, "ENOENT")
+				   strings.Contains(causeStr, "no such process") ||
+				   strings.Contains(causeStr, "ENOENT") ||
+				   strings.Contains(causeStr, "ESRCH")
 		}
 	}
-	// Also check the raw error message
-	errStr := fmt.Sprintf("%v", err)
-	return strings.Contains(errStr, "no such file or directory") || strings.Contains(errStr, "ENOENT")
+	
+	return false
 }
