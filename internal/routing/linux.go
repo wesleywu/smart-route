@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/wesleywu/update-routes-native/internal/logger"
 )
 
 type LinuxRouteManager struct {
@@ -29,20 +31,20 @@ func NewLinuxRouteManager(concurrencyLimit, maxRetries int) (RouteManager, error
 	}, nil
 }
 
-func (rm *LinuxRouteManager) AddRoute(network *net.IPNet, gateway net.IP) error {
+func (rm *LinuxRouteManager) AddRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	return rm.addRouteWithRetry(network, gateway)
 }
 
-func (rm *LinuxRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP) error {
+func (rm *LinuxRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	return rm.deleteRouteWithRetry(network, gateway)
 }
 
-func (rm *LinuxRouteManager) BatchAddRoutes(routes []Route) error {
-	return rm.batchOperation(routes, ActionAdd)
+func (rm *LinuxRouteManager) BatchAddRoutes(routes []Route, log *logger.Logger) error {
+	return rm.batchOperation(routes, ActionAdd, log)
 }
 
-func (rm *LinuxRouteManager) BatchDeleteRoutes(routes []Route) error {
-	return rm.batchOperation(routes, ActionDelete)
+func (rm *LinuxRouteManager) BatchDeleteRoutes(routes []Route, log *logger.Logger) error {
+	return rm.batchOperation(routes, ActionDelete, log)
 }
 
 func (rm *LinuxRouteManager) GetDefaultGateway() (net.IP, string, error) {
@@ -64,63 +66,6 @@ func (rm *LinuxRouteManager) ListRoutes() ([]Route, error) {
 
 	return parseIPRouteOutput(string(output))
 }
-
-func (rm *LinuxRouteManager) FlushRoutes(gateway net.IP) error {
-	routes, err := rm.ListRoutes()
-	if err != nil {
-		return fmt.Errorf("failed to list routes: %w", err)
-	}
-
-	var routesToDelete []Route
-	for _, route := range routes {
-		if route.Gateway.Equal(gateway) {
-			routesToDelete = append(routesToDelete, route)
-		}
-	}
-
-	return rm.BatchDeleteRoutes(routesToDelete, nil)
-}
-
-// CleanupRoutesForNetworks removes all existing routes for the specified networks/IPs
-func (rm *LinuxRouteManager) CleanupRoutesForNetworks(networks []net.IPNet, log *logger.Logger) error {
-	if len(networks) == 0 {
-		return nil
-	}
-
-	// Get all current routes
-	allRoutes, err := rm.ListRoutes()
-	if err != nil {
-		log.Debug("failed to list routes for cleanup", "error", err)
-		// Don't fail - we'll try to delete anyway
-	}
-
-	var routesToDelete []Route
-	
-	// Find existing routes that match our target networks
-	for _, network := range networks {
-		// Check all current routes to see if any match this network
-		for _, route := range allRoutes {
-			if routesMatch(network, route.Network) {
-				routesToDelete = append(routesToDelete, route)
-				log.Debug("found existing route to cleanup", 
-					"network", route.Network.String(), 
-					"gateway", route.Gateway.String())
-			}
-		}
-	}
-
-	// Delete found routes
-	if len(routesToDelete) > 0 {
-		log.Info("cleaning up existing routes", "count", len(routesToDelete))
-		if err := rm.BatchDeleteRoutes(routesToDelete, log); err != nil {
-			log.Warn("failed to cleanup some routes", "error", err)
-			// Don't return error - some routes might not exist anymore
-		}
-	}
-
-	return nil
-}
-
 
 func (rm *LinuxRouteManager) Close() error {
 	return nil
@@ -213,7 +158,7 @@ func (rm *LinuxRouteManager) deleteRouteDirect(network *net.IPNet, gateway net.I
 	return nil
 }
 
-func (rm *LinuxRouteManager) batchOperation(routes []Route, action ActionType) error {
+func (rm *LinuxRouteManager) batchOperation(routes []Route, action ActionType, log *logger.Logger) error {
 	semaphore := make(chan struct{}, rm.concurrencyLimit)
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(routes))
@@ -228,9 +173,9 @@ func (rm *LinuxRouteManager) batchOperation(routes []Route, action ActionType) e
 			var err error
 			switch action {
 			case ActionAdd:
-				err = rm.AddRoute(&r.Network, r.Gateway)
+				err = rm.AddRoute(&r.Network, r.Gateway, log)
 			case ActionDelete:
-				err = rm.DeleteRoute(&r.Network, r.Gateway)
+				err = rm.DeleteRoute(&r.Network, r.Gateway, log)
 			}
 
 			if err != nil {

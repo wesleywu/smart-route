@@ -15,9 +15,9 @@ import (
 
 var (
 	version = "1.0.0"
-	
-	configFile string
-	silentMode bool
+
+	configFile  string
+	silentMode  bool
 	verboseMode bool
 )
 
@@ -135,7 +135,6 @@ func runOnce(_ *cobra.Command, _ []string) {
 
 	log.Info("Configuration loaded", "chn_routes", chnRoutes.Size(), "chn_dns", chnDNS.Size())
 
-
 	// Create unified route switch handler
 	routeSwitch, err := routing.NewRouteSwitch(rm, chnRoutes, chnDNS, log)
 	if err != nil {
@@ -145,7 +144,7 @@ func runOnce(_ *cobra.Command, _ []string) {
 
 	// One-time mode: Always perform complete route reset
 	// This ensures consistent behavior and clean state for every run
-	log.Info("One-time mode: performing complete route reset", 
+	log.Info("One-time mode: performing complete route reset",
 		"current_gateway", gateway.String(), "interface", iface)
 
 	// Always use the unified logic: cleanup all managed routes, then setup for current gateway
@@ -153,7 +152,6 @@ func runOnce(_ *cobra.Command, _ []string) {
 		log.Error("Failed to setup routes", "error", err)
 		os.Exit(1)
 	}
-
 
 	log.Info("Route setup completed successfully")
 }
@@ -172,7 +170,7 @@ func runDaemon(cmd *cobra.Command, args []string) {
 	if verboseMode {
 		cfg.LogLevel = "debug"
 	}
-	
+
 	cfg.DaemonMode = true
 
 	log := logger.New(cfg)
@@ -211,25 +209,12 @@ func installService(cmd *cobra.Command, args []string) {
 		configPath = configFile
 	}
 
-	switch runtime.GOOS {
-	case "darwin":
-		service := daemon.NewLaunchdService(execPath, configPath)
-		if err := service.Install(); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to install service: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("Service installed successfully (launchd)")
-	case "linux":
-		// For now, use a basic installation approach for Linux
-		fmt.Println("Linux systemd service installation not fully implemented")
-		fmt.Printf("Please manually create systemd service using the template in scripts/service/smartroute.service\n")
-		fmt.Printf("sudo cp scripts/service/smartroute.service /etc/systemd/system/\n")
-		fmt.Printf("sudo systemctl enable smartroute\n")
-		fmt.Printf("sudo systemctl start smartroute\n")
-	default:
-		fmt.Fprintf(os.Stderr, "Service installation not supported on %s\n", runtime.GOOS)
+	service := daemon.NewPlatformService(execPath, configPath)
+	if err := service.Install(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to install service: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Printf("Service installed successfully (%s)\n", runtime.GOOS)
 }
 
 func uninstallService(cmd *cobra.Command, args []string) {
@@ -238,46 +223,23 @@ func uninstallService(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	switch runtime.GOOS {
-	case "darwin":
-		service := daemon.NewLaunchdService("", "")
-		if err := service.Uninstall(); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to uninstall service: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("Service uninstalled successfully")
-	case "linux":
-		fmt.Println("Linux systemd service uninstallation:")
-		fmt.Printf("sudo systemctl stop smartroute\n")
-		fmt.Printf("sudo systemctl disable smartroute\n")
-		fmt.Printf("sudo rm -f /etc/systemd/system/smartroute.service\n")
-		fmt.Printf("sudo systemctl daemon-reload\n")
-	default:
-		fmt.Fprintf(os.Stderr, "Service uninstallation not supported on %s\n", runtime.GOOS)
+	service := daemon.NewPlatformService("", "")
+	if err := service.Uninstall(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to uninstall service: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Println("Service uninstalled successfully")
 }
 
 func showStatus(cmd *cobra.Command, args []string) {
-	switch runtime.GOOS {
-	case "darwin":
-		service := daemon.NewLaunchdService("", "")
-		status, err := service.Status()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to get service status: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Service status: %s\n", status)
-		fmt.Printf("Service installed: %t\n", service.IsInstalled())
-	case "linux":
-		fmt.Println("Linux systemd service status:")
-		fmt.Printf("Check status with: sudo systemctl status smartroute\n")
-		fmt.Printf("Check if enabled: sudo systemctl is-enabled smartroute\n")
-		fmt.Printf("Check if active: sudo systemctl is-active smartroute\n")
-	default:
-		fmt.Fprintf(os.Stderr, "Service status not supported on %s\n", runtime.GOOS)
+	service := daemon.NewPlatformService("", "")
+	status, err := service.Status()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get service status: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Printf("Service status: %s\n", status)
+	fmt.Printf("Service installed: %t\n", service.IsInstalled())
 }
 
 func showVersion(cmd *cobra.Command, args []string) {
@@ -335,8 +297,6 @@ func testConfiguration(cmd *cobra.Command, args []string) {
 	} else {
 		fmt.Println("✅ Root privileges available")
 	}
-	
 
 	fmt.Println("✅ All tests passed")
 }
-

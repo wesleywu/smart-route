@@ -1,5 +1,5 @@
 //go:build darwin || freebsd
-
+// Package routing provides a route manager for BSD-based systems
 package routing
 
 import (
@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// BSDRouteManager is a route manager for BSD-based systems
 type BSDRouteManager struct {
 	socket           int
 	mutex            sync.Mutex
@@ -27,6 +28,7 @@ func newPlatformRouteManager(concurrencyLimit, maxRetries int) (RouteManager, er
 	return NewBSDRouteManager(concurrencyLimit, maxRetries)
 }
 
+// NewBSDRouteManager creates a new BSD route manager
 func NewBSDRouteManager(concurrencyLimit, maxRetries int) (RouteManager, error) {
 	sock, err := unix.Socket(unix.AF_ROUTE, unix.SOCK_RAW, unix.AF_UNSPEC)
 	if err != nil {
@@ -42,22 +44,27 @@ func NewBSDRouteManager(concurrencyLimit, maxRetries int) (RouteManager, error) 
 	}, nil
 }
 
+// AddRoute adds a route to the system
 func (rm *BSDRouteManager) AddRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	return rm.addRouteWithRetry(network, gateway, log)
 }
 
+// DeleteRoute deletes a route from the system
 func (rm *BSDRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	return rm.deleteRouteWithRetry(network, gateway, log)
 }
 
+// BatchAddRoutes adds multiple routes to the system
 func (rm *BSDRouteManager) BatchAddRoutes(routes []Route, log *logger.Logger) error {
 	return rm.batchOperation(routes, ActionAdd, log)
 }
 
+// BatchDeleteRoutes deletes multiple routes from the system
 func (rm *BSDRouteManager) BatchDeleteRoutes(routes []Route, log *logger.Logger) error {
 	return rm.batchOperation(routes, ActionDelete, log)
 }
 
+// GetDefaultGateway gets the default gateway from the system
 func (rm *BSDRouteManager) GetDefaultGateway() (net.IP, string, error) {
 	// Currently using command-line method
 	// TODO: Implement native method using route socket for consistency
@@ -70,6 +77,7 @@ func (rm *BSDRouteManager) GetDefaultGateway() (net.IP, string, error) {
 	return parseDefaultRoute(string(output))
 }
 
+// ListRoutes lists all routes from the system
 func (rm *BSDRouteManager) ListRoutes() ([]Route, error) {
 	cmd := exec.Command("netstat", "-rn")
 	output, err := cmd.Output()
@@ -80,63 +88,12 @@ func (rm *BSDRouteManager) ListRoutes() ([]Route, error) {
 	return parseNetstatOutput(string(output))
 }
 
-func (rm *BSDRouteManager) FlushRoutes(gateway net.IP) error {
-	// Instead of parsing netstat output, we'll attempt to delete routes
-	// that we know we might have added. This is more reliable since
-	// we control what routes we add.
-	
-	// For now, we don't need to implement full route flushing
-	// because we handle route conflicts during batch add operations
-	// The error handling in bsd_batch.go already skips "file exists" errors
-	
-	return nil // Routes will be overwritten/skipped during batch add
-}
-
-// CleanupRoutesForNetworks removes all existing routes for the specified networks/IPs
-func (rm *BSDRouteManager) CleanupRoutesForNetworks(networks []net.IPNet, log *logger.Logger) error {
-	if len(networks) == 0 {
-		return nil
-	}
-
-	// Get all current routes
-	allRoutes, err := rm.ListRoutes()
-	if err != nil {
-		log.Debug("failed to list routes for cleanup", "error", err)
-		// Don't fail - we'll try to delete anyway
-	}
-
-	var routesToDelete []Route
-	
-	// Find existing routes that match our target networks
-	for _, network := range networks {
-		// Check all current routes to see if any match this network
-		for _, route := range allRoutes {
-			if routesMatch(network, route.Network) {
-				routesToDelete = append(routesToDelete, route)
-				log.Debug("found existing route to cleanup", 
-					"network", route.Network.String(), 
-					"gateway", route.Gateway.String())
-			}
-		}
-	}
-
-	// Delete found routes
-	if len(routesToDelete) > 0 {
-		log.Info("cleaning up existing routes", "count", len(routesToDelete))
-		if err := rm.BatchDeleteRoutes(routesToDelete, log); err != nil {
-			log.Warn("failed to cleanup some routes", "error", err)
-			// Don't return error - some routes might not exist anymore
-		}
-	}
-
-	return nil
-}
-
-
+// Close closes the route manager
 func (rm *BSDRouteManager) Close() error {
 	return unix.Close(rm.socket)
 }
 
+// addRouteWithRetry adds a route to the system with retry logic
 func (rm *BSDRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	var lastErr error
 	start := time.Now()
@@ -161,6 +118,7 @@ func (rm *BSDRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP,
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }
 
+// deleteRouteWithRetry deletes a route from the system with retry logic
 func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	var lastErr error
 	start := time.Now()
@@ -364,7 +322,8 @@ func parseDestination(dest string) (*net.IPNet, error) {
 				IP:   ip,
 				Mask: net.CIDRMask(32, 32),
 			}, nil
-		} else {
+		}
+		if ip.To16() != nil {
 			// IPv6
 			return &net.IPNet{
 				IP:   ip,

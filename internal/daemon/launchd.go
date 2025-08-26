@@ -1,5 +1,6 @@
 //go:build darwin
 
+// Package daemon provides a launchd service for macOS
 package daemon
 
 import (
@@ -10,6 +11,7 @@ import (
 )
 
 const (
+	// LaunchdPlistTemplate is the template for the launchd service plist file
 	LaunchdPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -35,15 +37,20 @@ const (
 	<string>/usr/local/bin</string>
 </dict>
 </plist>`
-	
+	// LaunchdPlistPath is the path to the launchd service plist file
 	LaunchdPlistPath = "/Library/LaunchDaemons/com.smartroute.plist"
 )
 
+// LaunchdService is a launchd service for macOS
 type LaunchdService struct {
 	execPath   string
 	configPath string
 }
 
+// Ensure LaunchdService implements PlatformService
+var _ PlatformService = (*LaunchdService)(nil)
+
+// NewLaunchdService creates a new LaunchdService
 func NewLaunchdService(execPath, configPath string) *LaunchdService {
 	return &LaunchdService{
 		execPath:   execPath,
@@ -51,13 +58,14 @@ func NewLaunchdService(execPath, configPath string) *LaunchdService {
 	}
 }
 
+// Install installs the launchd service
 func (s *LaunchdService) Install() error {
 	if os.Getuid() != 0 {
 		return fmt.Errorf("root privileges required to install launchd service")
 	}
 
 	plistContent := fmt.Sprintf(LaunchdPlistTemplate, s.execPath, s.configPath)
-	
+
 	if err := os.WriteFile(LaunchdPlistPath, []byte(plistContent), 0644); err != nil {
 		return fmt.Errorf("failed to write plist file: %w", err)
 	}
@@ -70,6 +78,7 @@ func (s *LaunchdService) Install() error {
 	return nil
 }
 
+// Uninstall uninstalls the launchd service
 func (s *LaunchdService) Uninstall() error {
 	if os.Getuid() != 0 {
 		return fmt.Errorf("root privileges required to uninstall launchd service")
@@ -87,16 +96,19 @@ func (s *LaunchdService) Uninstall() error {
 	return nil
 }
 
+// Start starts the launchd service
 func (s *LaunchdService) Start() error {
 	cmd := exec.Command("launchctl", "start", "com.smartroute.daemon")
 	return cmd.Run()
 }
 
+// Stop stops the launchd service
 func (s *LaunchdService) Stop() error {
 	cmd := exec.Command("launchctl", "stop", "com.smartroute.daemon")
 	return cmd.Run()
 }
 
+// Status returns the status of the launchd service
 func (s *LaunchdService) Status() (string, error) {
 	cmd := exec.Command("launchctl", "list", "com.smartroute.daemon")
 	output, err := cmd.Output()
@@ -107,15 +119,17 @@ func (s *LaunchdService) Status() (string, error) {
 	if len(output) > 0 {
 		return "running", nil
 	}
-	
+
 	return "unknown", nil
 }
 
+// IsInstalled checks if the launchd service is installed
 func (s *LaunchdService) IsInstalled() bool {
 	_, err := os.Stat(LaunchdPlistPath)
 	return err == nil
 }
 
+// InstallBinary installs the binary
 func InstallBinary(sourcePath, targetDir string) error {
 	if os.Getuid() != 0 {
 		return fmt.Errorf("root privileges required to install binary")
@@ -126,7 +140,7 @@ func InstallBinary(sourcePath, targetDir string) error {
 	}
 
 	targetPath := filepath.Join(targetDir, "smartroute")
-	
+
 	source, err := os.Open(sourcePath)
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)

@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
-	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -18,6 +16,7 @@ import (
 	"github.com/wesleywu/update-routes-native/internal/routing"
 )
 
+// ServiceManager is a manager for the service
 type ServiceManager struct {
 	config       *config.Config
 	logger       *logger.Logger
@@ -37,6 +36,7 @@ type ServiceManager struct {
 	lastCheck    time.Time
 }
 
+// NewServiceManager creates a new ServiceManager
 func NewServiceManager(cfg *config.Config, log *logger.Logger) (*ServiceManager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	
@@ -79,6 +79,7 @@ func NewServiceManager(cfg *config.Config, log *logger.Logger) (*ServiceManager,
 	return sm, nil
 }
 
+// Start starts the service
 func (sm *ServiceManager) Start() error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
@@ -119,6 +120,7 @@ func (sm *ServiceManager) Start() error {
 	return nil
 }
 
+// Stop stops the service
 func (sm *ServiceManager) Stop() error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
@@ -151,6 +153,7 @@ func (sm *ServiceManager) Stop() error {
 	}
 }
 
+// Wait waits for the service to stop
 func (sm *ServiceManager) Wait() error {
 	select {
 	case <-sm.ctx.Done():
@@ -161,6 +164,7 @@ func (sm *ServiceManager) Wait() error {
 	}
 }
 
+// serviceLoop is the main loop for the service
 func (sm *ServiceManager) serviceLoop() {
 	defer close(sm.doneChan)
 	
@@ -174,6 +178,7 @@ func (sm *ServiceManager) serviceLoop() {
 	}
 }
 
+// handleNetworkEvent handles network events
 func (sm *ServiceManager) handleNetworkEvent(event network.NetworkEvent) {
 	gwStr := "<nil>"
 	if event.Gateway != nil {
@@ -204,6 +209,7 @@ func (sm *ServiceManager) handleNetworkEvent(event network.NetworkEvent) {
 	}
 }
 
+// handleGatewayChange handles gateway changes
 func (sm *ServiceManager) handleGatewayChange(newGW net.IP) error {
 	sm.mutex.Lock()
 	oldGW := sm.currentGW
@@ -221,10 +227,8 @@ func (sm *ServiceManager) handleGatewayChange(newGW net.IP) error {
 	sm.currentGW = newGW
 	sm.mutex.Unlock()
 
-	// Flush route cache to ensure changes take effect immediately
-	if err := sm.flushRouteCache(); err != nil {
-		sm.logger.Warn("failed to flush route cache", "error", err)
-	}
+	// Note: Removed route cache flush as it was clearing all routes including the ones we just added
+	// The route changes should take effect immediately without flushing the entire route cache
 
 	sm.logger.Info("gateway change completed successfully",
 		"old_gateway", sm.ipToString(oldGW),
@@ -234,12 +238,14 @@ func (sm *ServiceManager) handleGatewayChange(newGW net.IP) error {
 	return nil
 }
 
+// setupInitialRoutes sets up initial routes
 func (sm *ServiceManager) setupInitialRoutes() error {
 	// Use unified route switch logic for initial setup
 	return sm.routeSwitch.SetupRoutes(sm.currentGW)
 }
 
 
+// checkAndHandleGatewayChange checks and handles gateway changes
 func (sm *ServiceManager) checkAndHandleGatewayChange() {
 	sm.mutex.Lock()
 	now := time.Now()
@@ -278,16 +284,20 @@ func (sm *ServiceManager) checkAndHandleGatewayChange() {
 }
 
 
-func (sm *ServiceManager) flushRouteCache() error {
-	// On macOS, flush the route cache to ensure changes take effect
-	if runtime.GOOS == "darwin" {
-		cmd := exec.Command("route", "-n", "flush")
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to flush route cache: %w", err)
-		}
-	}
-	return nil
-}
+// flushRouteCache was removed because it was causing route loss
+// The 'route -n flush' command clears ALL routes from the system,
+// including the ones we just added, which is not what we want.
+// Route changes should take effect immediately without cache flushing.
+//
+// func (sm *ServiceManager) flushRouteCache() error {
+// 	if runtime.GOOS == "darwin" {
+// 		cmd := exec.Command("route", "-n", "flush")
+// 		if err := cmd.Run(); err != nil {
+// 			return fmt.Errorf("failed to flush route cache: %w", err)
+// 		}
+// 	}
+// 	return nil
+// }
 
 
 // ipToString safely converts IP to string, handling nil
@@ -298,12 +308,14 @@ func (sm *ServiceManager) ipToString(ip net.IP) string {
 	return ip.String()
 }
 
+// IsRunning checks if the service is running
 func (sm *ServiceManager) IsRunning() bool {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
 	return sm.isRunning
 }
 
+// GetStatus gets the status of the service
 func (sm *ServiceManager) GetStatus() map[string]interface{} {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()

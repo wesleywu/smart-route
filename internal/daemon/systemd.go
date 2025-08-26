@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	// SystemdServiceTemplate is the template for the systemd service file
 	SystemdServiceTemplate = `[Unit]
 Description=Smart Route Manager
 After=network.target
@@ -27,15 +28,17 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target`
-
+	// SystemdServicePath is the path to the systemd service file
 	SystemdServicePath = "/etc/systemd/system/smartroute.service"
 )
 
+// SystemdService is a systemd service for Linux
 type SystemdService struct {
 	execPath   string
 	configPath string
 }
 
+// NewSystemdService creates a new SystemdService
 func NewSystemdService(execPath, configPath string) *SystemdService {
 	return &SystemdService{
 		execPath:   execPath,
@@ -43,6 +46,7 @@ func NewSystemdService(execPath, configPath string) *SystemdService {
 	}
 }
 
+// Install installs the systemd service
 func (s *SystemdService) Install() error {
 	if os.Getuid() != 0 {
 		return fmt.Errorf("root privileges required to install systemd service")
@@ -67,6 +71,7 @@ func (s *SystemdService) Install() error {
 	return nil
 }
 
+// Uninstall uninstalls the systemd service
 func (s *SystemdService) Uninstall() error {
 	if os.Getuid() != 0 {
 		return fmt.Errorf("root privileges required to uninstall systemd service")
@@ -94,16 +99,19 @@ func (s *SystemdService) Uninstall() error {
 	return nil
 }
 
+// Start starts the systemd service
 func (s *SystemdService) Start() error {
 	cmd := exec.Command("systemctl", "start", "smartroute")
 	return cmd.Run()
 }
 
+// Stop stops the systemd service
 func (s *SystemdService) Stop() error {
 	cmd := exec.Command("systemctl", "stop", "smartroute")
 	return cmd.Run()
 }
 
+// Status returns the status of the systemd service
 func (s *SystemdService) Status() (string, error) {
 	cmd := exec.Command("systemctl", "is-active", "smartroute")
 	output, err := cmd.Output()
@@ -116,11 +124,13 @@ func (s *SystemdService) Status() (string, error) {
 	return status, nil
 }
 
+// IsInstalled checks if the systemd service is installed
 func (s *SystemdService) IsInstalled() bool {
 	_, err := os.Stat(SystemdServicePath)
 	return err == nil
 }
 
+// InstallBinary installs the binary
 func InstallBinary(sourcePath, targetDir string) error {
 	if os.Getuid() != 0 {
 		return fmt.Errorf("root privileges required to install binary")
