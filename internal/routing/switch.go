@@ -11,85 +11,56 @@ import (
 
 // RouteSwitch handles the complete route switching logic used by both one-time and daemon modes
 type RouteSwitch struct {
-	rm            RouteManager
-	cleanupMgr    *CleanupManager
-	logger        *logger.Logger
-	chnRoutes     *config.IPSet
-	chnDNS        *config.DNSServers
+	rm         RouteManager
+	logger     *logger.Logger
+	chnRoutes  *config.IPSet
+	chnDNS     *config.DNSServers
 }
 
 // NewRouteSwitch creates a new route switch handler
-func NewRouteSwitch(rm RouteManager, chnRoutes *config.IPSet, chnDNS *config.DNSServers, logger *logger.Logger, chnRoutesFile, chnDNSFile string) (*RouteSwitch, error) {
-	cleanupMgr, err := NewCleanupManager(rm, logger, chnRoutesFile, chnDNSFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cleanup manager: %w", err)
-	}
-	
+func NewRouteSwitch(rm RouteManager, chnRoutes *config.IPSet, chnDNS *config.DNSServers, logger *logger.Logger) (*RouteSwitch, error) {
 	return &RouteSwitch{
-		rm:            rm,
-		chnRoutes:     chnRoutes,
-		chnDNS:        chnDNS,
-		logger:        logger,
-		cleanupMgr:    cleanupMgr,
+		rm:         rm,
+		chnRoutes:  chnRoutes,
+		chnDNS:     chnDNS,
+		logger:     logger,
 	}, nil
 }
 
 // SetupRoutes performs complete route reset - used by both one-time and daemon modes
 // This is the unified logic: always cleanup ALL managed routes, then setup for current gateway
-func (rs *RouteSwitch) SetupRoutes(gateway net.IP, iface string) error {
+func (rs *RouteSwitch) SetupRoutes(gateway net.IP) error {
 	if gateway == nil {
 		return fmt.Errorf("gateway cannot be nil")
 	}
 
 	rs.logger.Info("performing complete route reset",
-		"gateway", gateway.String(),
-		"interface", iface)
+		"gateway", gateway.String())
 
 	// Phase 1: Clean up ALL managed routes (completely gateway-independent)
 	rs.logger.Info("phase 1: cleaning up all managed routes")
-	if err := rs.cleanupAllManagedRoutes(); err != nil {
+	if err := rs.cleanRoutes(); err != nil {
 		rs.logger.Error("failed to cleanup managed routes", "error", err)
 		return fmt.Errorf("failed to cleanup managed routes: %w", err)
 	}
 
 	// Phase 2: Set up routes for current gateway
 	rs.logger.Info("phase 2: setting up routes for current gateway")
-	if err := rs.setupRoutes(gateway); err != nil {
+	if err := rs.addRoutes(gateway); err != nil {
 		rs.logger.Error("failed to setup routes for current gateway", "gateway", gateway.String(), "error", err)
 		return fmt.Errorf("failed to setup routes for current gateway: %w", err)
 	}
 
 	rs.logger.Info("route reset completed successfully",
-		"gateway", gateway.String(),
-		"interface", iface)
+		"gateway", gateway.String())
 
 	return nil
 }
 
-// cleanupAllManagedRoutes removes ALL routes in the system that match networks from config files
-// This has NOTHING to do with any specific gateway - it deletes ALL matching routes regardless of gateway
-func (rs *RouteSwitch) cleanupAllManagedRoutes() error {
+// addRoutes adds all managed routes for the specified gateway
+func (rs *RouteSwitch) addRoutes(gateway net.IP) error {
 	start := time.Now()
-	
-	rs.logger.Info("cleaning up ALL managed routes from system (gateway-independent)")
-	
-	// Use the new complete cleanup manager - this is completely gateway-agnostic
-	err := rs.cleanupMgr.CleanupAllManagedRoutes()
-	duration := time.Since(start).Milliseconds()
-	
-	if err != nil {
-		rs.logger.Error("failed to cleanup managed routes", "error", err, "duration_ms", duration)
-		return err
-	}
-	
-	rs.logger.Info("complete route cleanup finished", "duration_ms", duration)
-	return nil
-}
 
-// setupRoutes adds all managed routes for the specified gateway
-func (rs *RouteSwitch) setupRoutes(gateway net.IP) error {
-	start := time.Now()
-	
 	routes := rs.buildRoutes(gateway)
 	if len(routes) == 0 {
 		return nil
@@ -106,6 +77,47 @@ func (rs *RouteSwitch) setupRoutes(gateway net.IP) error {
 	}
 
 	rs.logger.Info("route setup completed", "gateway", gateway.String(), "count", len(routes), "duration_ms", duration)
+	return nil
+}
+
+// CleanupAllManagedRoutes removes all routes for networks defined in Chinese DNS and route files
+func (rs *RouteSwitch) cleanRoutes() error {
+	start := time.Now()
+
+	rs.logger.Info("cleaning up ALL managed routes from system (gateway-independent)")
+	routes := rs.buildRoutes(nil)
+	if len(routes) == 0 {
+		return nil
+	}
+
+	rs.logger.Info("starting complete route cleanup", "managed_networks_count", len(routes))
+
+	// Step 2: Get all current routes from system
+	currentRoutes, err := rs.rm.ListRoutes()
+	if err != nil {
+		return fmt.Errorf("failed to list current routes: %w", err)
+	}
+
+	rs.logger.Info("retrieved system routes", "total_count", len(currentRoutes))
+
+	// Step 3: Find all routes that match our managed networks
+	routesToDelete := rs.findMatchingRoutes(routes, currentRoutes)
+
+	rs.logger.Info("found routes to cleanup", "count", len(routesToDelete))
+
+	// Step 4: Delete all matching routes
+	if len(routesToDelete) == 0 {
+		rs.logger.Info("no routes to cleanup")
+		return nil
+	}
+
+	err = rs.rm.BatchDeleteRoutes(routesToDelete, rs.logger)
+	if err != nil {
+		rs.logger.Error("failed to delete routes", "error", err)
+		return fmt.Errorf("failed to delete routes: %w", err)
+	}
+
+	rs.logger.Info("successfully deleted all routes", "count", len(routesToDelete), "duration_ms", time.Since(start).Milliseconds())
 	return nil
 }
 
@@ -131,7 +143,7 @@ func (rs *RouteSwitch) buildRoutes(gateway net.IP) []Route {
 		} else {
 			ipNet = net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
 		}
-		
+
 		routes = append(routes, Route{
 			Network: ipNet,
 			Gateway: gateway,
@@ -141,3 +153,36 @@ func (rs *RouteSwitch) buildRoutes(gateway net.IP) []Route {
 	return routes
 }
 
+// findMatchingRoutes finds all system routes that match our managed networks
+func (rs *RouteSwitch) findMatchingRoutes(managedNetworks []Route, systemRoutes []Route) []Route {
+	var matchingRoutes []Route
+
+	for _, managedNetwork := range managedNetworks {
+		for _, systemRoute := range systemRoutes {
+			if rs.networksEqual(managedNetwork.Network, systemRoute.Network) {
+				matchingRoutes = append(matchingRoutes, systemRoute)
+				rs.logger.Debug("found matching route",
+					"network", systemRoute.Network.String(),
+					"gateway", systemRoute.Gateway.String(),
+					"interface", systemRoute.Interface)
+			}
+		}
+	}
+
+	return matchingRoutes
+}
+
+// networksEqual checks if two networks are equivalent
+func (rs *RouteSwitch) networksEqual(net1, net2 net.IPNet) bool {
+	// Check if IPs are equal
+	if !net1.IP.Equal(net2.IP) {
+		return false
+	}
+
+	// Get mask bit counts
+	bits1, size1 := net1.Mask.Size()
+	bits2, size2 := net2.Mask.Size()
+
+	// Both should be the same type (IPv4 or IPv6) and have same mask bits
+	return size1 == size2 && bits1 == bits2
+}

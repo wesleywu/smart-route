@@ -71,7 +71,7 @@ func NewServiceManager(cfg *config.Config, log *logger.Logger) (*ServiceManager,
 	}
 
 	// Initialize route switch with unified logic
-	sm.routeSwitch, err = routing.NewRouteSwitch(sm.router, sm.chnRoutes, sm.chnDNS, sm.logger, cfg.ChnRouteFile, cfg.ChnDNSFile)
+	sm.routeSwitch, err = routing.NewRouteSwitch(sm.router, sm.chnRoutes, sm.chnDNS, sm.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create route switch: %w", err)
 	}
@@ -190,7 +190,7 @@ func (sm *ServiceManager) handleNetworkEvent(event network.NetworkEvent) {
 	switch event.Type {
 	case network.GatewayChanged:
 		if event.Gateway != nil {
-			if err := sm.handleGatewayChange(event.Gateway, event.Interface); err != nil {
+			if err := sm.handleGatewayChange(event.Gateway); err != nil {
 				sm.logger.Error("failed to handle gateway change", "error", err)
 			}
 		}
@@ -204,14 +204,14 @@ func (sm *ServiceManager) handleNetworkEvent(event network.NetworkEvent) {
 	}
 }
 
-func (sm *ServiceManager) handleGatewayChange(newGW net.IP, newIface string) error {
+func (sm *ServiceManager) handleGatewayChange(newGW net.IP) error {
 	sm.mutex.Lock()
 	oldGW := sm.currentGW
 	oldIface := sm.currentIface
 	sm.mutex.Unlock()
 
 	// Use unified route switch logic
-	if err := sm.routeSwitch.SetupRoutes(newGW, newIface); err != nil {
+	if err := sm.routeSwitch.SetupRoutes(newGW); err != nil {
 		sm.logger.Error("failed to switch routes", "error", err)
 		return err
 	}
@@ -219,7 +219,6 @@ func (sm *ServiceManager) handleGatewayChange(newGW net.IP, newIface string) err
 	// Update current gateway after successful transition
 	sm.mutex.Lock()
 	sm.currentGW = newGW
-	sm.currentIface = newIface
 	sm.mutex.Unlock()
 
 	// Flush route cache to ensure changes take effect immediately
@@ -230,15 +229,14 @@ func (sm *ServiceManager) handleGatewayChange(newGW net.IP, newIface string) err
 	sm.logger.Info("gateway change completed successfully",
 		"old_gateway", sm.ipToString(oldGW),
 		"old_interface", oldIface,
-		"new_gateway", newGW.String(),
-		"new_interface", newIface)
+		"new_gateway", newGW.String())
 
 	return nil
 }
 
 func (sm *ServiceManager) setupInitialRoutes() error {
 	// Use unified route switch logic for initial setup
-	return sm.routeSwitch.SetupRoutes(sm.currentGW, sm.currentIface)
+	return sm.routeSwitch.SetupRoutes(sm.currentGW)
 }
 
 
@@ -273,7 +271,7 @@ func (sm *ServiceManager) checkAndHandleGatewayChange() {
 			"new_gateway", currentGW.String(),
 			"new_interface", currentIface)
 
-		if err := sm.handleGatewayChange(currentGW, currentIface); err != nil {
+		if err := sm.handleGatewayChange(currentGW); err != nil {
 			sm.logger.Error("failed to handle detected gateway change", "error", err)
 		}
 	}

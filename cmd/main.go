@@ -88,7 +88,7 @@ func main() {
 	}
 }
 
-func runOnce(cmd *cobra.Command, args []string) {
+func runOnce(_ *cobra.Command, _ []string) {
 	cfg, err := config.LoadConfig(configFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
@@ -105,12 +105,6 @@ func runOnce(cmd *cobra.Command, args []string) {
 
 	log := logger.New(cfg)
 	log.Info("Starting one-time route setup", "version", version)
-
-	_, err = daemon.NewServiceManager(cfg, log)
-	if err != nil {
-		log.Error("Failed to create service manager", "error", err)
-		os.Exit(1)
-	}
 
 	gateway, iface, err := network.GetDefaultGateway()
 	if err != nil {
@@ -143,7 +137,7 @@ func runOnce(cmd *cobra.Command, args []string) {
 
 
 	// Create unified route switch handler
-	routeSwitch, err := routing.NewRouteSwitch(rm, chnRoutes, chnDNS, log, cfg.ChnRouteFile, cfg.ChnDNSFile)
+	routeSwitch, err := routing.NewRouteSwitch(rm, chnRoutes, chnDNS, log)
 	if err != nil {
 		log.Error("Failed to create route switch", "error", err)
 		os.Exit(1)
@@ -155,7 +149,7 @@ func runOnce(cmd *cobra.Command, args []string) {
 		"current_gateway", gateway.String(), "interface", iface)
 
 	// Always use the unified logic: cleanup all managed routes, then setup for current gateway
-	if err := routeSwitch.SetupRoutes(gateway, iface); err != nil {
+	if err := routeSwitch.SetupRoutes(gateway); err != nil {
 		log.Error("Failed to setup routes", "error", err)
 		os.Exit(1)
 	}
