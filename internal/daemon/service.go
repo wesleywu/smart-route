@@ -13,6 +13,7 @@ import (
 	"github.com/wesleywu/update-routes-native/internal/config"
 	"github.com/wesleywu/update-routes-native/internal/logger"
 	"github.com/wesleywu/update-routes-native/internal/routing"
+	"github.com/wesleywu/update-routes-native/internal/routing/entities"
 )
 
 // ServiceManager is a manager for the service
@@ -20,7 +21,7 @@ type ServiceManager struct {
 	config       *config.Config
 	logger       *logger.Logger
 	monitor      *routing.NetworkMonitor
-	router       routing.RouteManager
+	router       entities.RouteManager
 	routeSwitch  *routing.RouteSwitch
 	chnRoutes    *config.IPSet
 	chnDNS       *config.DNSServers

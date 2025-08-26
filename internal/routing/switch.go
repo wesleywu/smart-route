@@ -7,18 +7,19 @@ import (
 
 	"github.com/wesleywu/update-routes-native/internal/config"
 	"github.com/wesleywu/update-routes-native/internal/logger"
+	"github.com/wesleywu/update-routes-native/internal/routing/entities"
 )
 
 // RouteSwitch handles the complete route switching logic used by both one-time and daemon modes
 type RouteSwitch struct {
-	rm         RouteManager
+	rm         entities.RouteManager
 	logger     *logger.Logger
 	chnRoutes  *config.IPSet
 	chnDNS     *config.DNSServers
 }
 
 // NewRouteSwitch creates a new route switch handler
-func NewRouteSwitch(rm RouteManager, chnRoutes *config.IPSet, chnDNS *config.DNSServers, logger *logger.Logger) (*RouteSwitch, error) {
+func NewRouteSwitch(rm entities.RouteManager, chnRoutes *config.IPSet, chnDNS *config.DNSServers, logger *logger.Logger) (*RouteSwitch, error) {
 	return &RouteSwitch{
 		rm:         rm,
 		chnRoutes:  chnRoutes,
@@ -136,13 +137,13 @@ func (rs *RouteSwitch) cleanRoutes() error {
 }
 
 // buildRoutes creates route list for the specified gateway
-func (rs *RouteSwitch) buildRoutes(gateway net.IP) []Route {
-	var routes []Route
+func (rs *RouteSwitch) buildRoutes(gateway net.IP) []entities.Route {
+	var routes []entities.Route
 
 	// Add Chinese network routes
 	networks := rs.chnRoutes.GetNetworks()
 	for _, network := range networks {
-		routes = append(routes, Route{
+		routes = append(routes, entities.Route{
 			Network: network,
 			Gateway: gateway,
 		})
@@ -158,7 +159,7 @@ func (rs *RouteSwitch) buildRoutes(gateway net.IP) []Route {
 			ipNet = net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
 		}
 
-		routes = append(routes, Route{
+		routes = append(routes, entities.Route{
 			Network: ipNet,
 			Gateway: gateway,
 		})
@@ -168,8 +169,8 @@ func (rs *RouteSwitch) buildRoutes(gateway net.IP) []Route {
 }
 
 // findMatchingRoutes finds all system routes that match our managed networks
-func (rs *RouteSwitch) findMatchingRoutes(managedNetworks []Route, systemRoutes []Route) []Route {
-	var matchingRoutes []Route
+func (rs *RouteSwitch) findMatchingRoutes(managedNetworks []entities.Route, systemRoutes []entities.Route) []entities.Route {
+	var matchingRoutes []entities.Route
 
 	for _, managedNetwork := range managedNetworks {
 		for _, systemRoute := range systemRoutes {

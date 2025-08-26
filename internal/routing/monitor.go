@@ -3,11 +3,10 @@ package routing
 import (
 	"fmt"
 	"net"
-	"runtime"
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
+	"github.com/wesleywu/update-routes-native/internal/routing/entities"
 )
 
 // NetworkMonitor is a monitor for the network
@@ -21,18 +20,18 @@ type NetworkMonitor struct {
 	isRunning      bool
 	pollInterval   time.Duration
 	lastRouteCheck time.Time
-	
+
 	// Smart polling control
-	pollEnabled       bool
-	pollTicker        *time.Ticker
-	pollStopChan      chan struct{}
-	lastEventTime     time.Time
-	routeSocketErrors int
-	maxSocketErrors   int
+	pollEnabled         bool
+	pollTicker          *time.Ticker
+	pollStopChan        chan struct{}
+	lastEventTime       time.Time
+	routeSocketErrors   int
+	maxSocketErrors     int
 	healthCheckInterval time.Duration
-	
+
 	// RouteManager for getting gateway information
-	routeManager RouteManager
+	routeManager entities.RouteManager
 }
 
 // NetworkEvent is an event from the network monitor
@@ -74,11 +73,11 @@ func (e EventType) String() string {
 }
 
 // NewNetworkMonitor creates a new NetworkMonitor
-func NewNetworkMonitor(pollInterval time.Duration, routeManager RouteManager) (*NetworkMonitor, error) {
+func NewNetworkMonitor(pollInterval time.Duration, routeManager entities.RouteManager) (*NetworkMonitor, error) {
 	if routeManager == nil {
 		return nil, fmt.Errorf("routeManager cannot be nil")
 	}
-	
+
 	gateway, iface, err := routeManager.GetDefaultGateway()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get initial gateway: %w", err)
@@ -91,8 +90,8 @@ func NewNetworkMonitor(pollInterval time.Duration, routeManager RouteManager) (*
 		stopChan:            make(chan struct{}),
 		pollInterval:        pollInterval,
 		pollStopChan:        make(chan struct{}),
-		pollEnabled:         false, // Default to disable polling
-		maxSocketErrors:     3,     // Enable polling after 3 consecutive socket errors
+		pollEnabled:         false,            // Default to disable polling
+		maxSocketErrors:     3,                // Enable polling after 3 consecutive socket errors
 		healthCheckInterval: 30 * time.Second, // 30 second health check interval
 		lastEventTime:       time.Now(),
 		routeManager:        routeManager,
@@ -109,31 +108,16 @@ func (nm *NetworkMonitor) Start() error {
 	}
 
 	// Try to create route socket for real-time monitoring
-	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
-		sock, err := unix.Socket(unix.AF_ROUTE, unix.SOCK_RAW, unix.AF_UNSPEC)
-		if err != nil {
-			// socket创建失败，启用轮询作为备用
-			fmt.Printf("Failed to create route socket, enabling polling as fallback: %v\n", err)
-			nm.pollEnabled = true
-		} else {
-			nm.routeSocket = sock
-			fmt.Printf("Route socket monitoring started (real-time events)\n")
-			go nm.monitorRouteSocket()
-		}
-	} else {
-		// Non-supported platform, enable polling
-		fmt.Printf("Platform %s not supported for route socket, enabling polling\n", runtime.GOOS)
-		nm.pollEnabled = true
-	}
+	nm.startPlatformMonitoring()
 
 	// Start health check goroutine
 	go nm.healthCheck()
-	
+
 	// If polling is enabled, start polling
 	if nm.pollEnabled {
 		nm.startPolling()
 	}
-	
+
 	nm.isRunning = true
 	return nil
 }
@@ -148,14 +132,11 @@ func (nm *NetworkMonitor) Stop() error {
 	}
 
 	close(nm.stopChan)
-	
+
 	// 停止轮询
 	nm.stopPolling()
-	
-	if nm.routeSocket > 0 {
-		unix.Close(nm.routeSocket)
-		nm.routeSocket = 0
-	}
+
+	nm.closeRouteSocket()
 
 	nm.isRunning = false
 	return nil
@@ -170,18 +151,15 @@ func (nm *NetworkMonitor) Events() <-chan NetworkEvent {
 func (nm *NetworkMonitor) GetCurrentGateway() (net.IP, string) {
 	nm.mutex.RLock()
 	defer nm.mutex.RUnlock()
-	
+
 	gateway := make(net.IP, len(nm.gateway))
 	copy(gateway, nm.gateway)
-	
+
 	return gateway, nm.defaultIface
 }
 
 // monitorRouteSocket monitors the route socket
 func (nm *NetworkMonitor) monitorRouteSocket() {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		return
-	}
 
 	buffer := make([]byte, 4096)
 	for {
@@ -190,7 +168,7 @@ func (nm *NetworkMonitor) monitorRouteSocket() {
 			return
 		default:
 			// Use blocking read to avoid busy waiting
-			n, err := unix.Read(nm.routeSocket, buffer)
+			n, err := nm.readRouteSocket(buffer)
 			if err != nil {
 				// Check if the error is due to monitor stop
 				select {
@@ -198,15 +176,15 @@ func (nm *NetworkMonitor) monitorRouteSocket() {
 					return
 				default:
 				}
-				
+
 				// Only count actual read errors
-				if err != unix.EAGAIN && err != unix.EWOULDBLOCK {
+				if nm.isSocketError(err) {
 					nm.mutex.Lock()
 					nm.routeSocketErrors++
 					fmt.Printf("Route socket read error (%d/%d): %v\n", nm.routeSocketErrors, nm.maxSocketErrors, err)
 					nm.mutex.Unlock()
 				}
-				
+
 				// Short delay before retrying to avoid busy waiting
 				time.Sleep(100 * time.Millisecond)
 				continue
@@ -263,7 +241,7 @@ func (nm *NetworkMonitor) healthCheck() {
 				nm.mutex.RLock()
 				stillNoErrors := nm.routeSocketErrors == 0
 				nm.mutex.RUnlock()
-				
+
 				if stillNoErrors {
 					fmt.Printf("Route socket appears stable, disabling polling\n")
 					nm.mutex.Lock()
@@ -301,7 +279,7 @@ func (nm *NetworkMonitor) startPolling() {
 			}
 		}
 	}()
-	
+
 	fmt.Printf("Polling started with interval %v\n", nm.pollInterval)
 }
 
@@ -328,11 +306,11 @@ func (nm *NetworkMonitor) checkGatewayChange() {
 	oldIface := nm.defaultIface
 	gatewayChanged := !nm.gateway.Equal(currentGateway)
 	interfaceChanged := nm.defaultIface != currentIface
-	
+
 	// Add debug logging
-	fmt.Printf("DEBUG: Gateway check - Old: %s (%s), Current: %s (%s), Changed: %t\n", 
+	fmt.Printf("DEBUG: Gateway check - Old: %s (%s), Current: %s (%s), Changed: %t\n",
 		oldGateway.String(), oldIface, currentGateway.String(), currentIface, gatewayChanged || interfaceChanged)
-	
+
 	if gatewayChanged || interfaceChanged {
 		nm.gateway = currentGateway
 		nm.defaultIface = currentIface
@@ -367,7 +345,7 @@ func (nm *NetworkMonitor) parseRouteMessage(data []byte) *NetworkEvent {
 	if nm.lastRouteCheck.IsZero() || now.Sub(nm.lastRouteCheck) > 200*time.Millisecond {
 		nm.lastRouteCheck = now
 		nm.mutex.Unlock()
-		
+
 		// Trigger immediate gateway check when route messages are received
 		go func() {
 			// Small delay to allow network stack to settle
@@ -387,13 +365,13 @@ func (nm *NetworkMonitor) GetMonitorStatus() map[string]interface{} {
 	defer nm.mutex.RUnlock()
 
 	return map[string]interface{}{
-		"is_running":             nm.isRunning,
-		"poll_enabled":           nm.pollEnabled,
-		"route_socket":           nm.routeSocket > 0,
-		"route_socket_errors":    nm.routeSocketErrors,
-		"last_event_time":        nm.lastEventTime,
-		"time_since_last_event":  time.Since(nm.lastEventTime),
-		"health_check_interval":  nm.healthCheckInterval,
-		"poll_interval":          nm.pollInterval,
+		"is_running":            nm.isRunning,
+		"poll_enabled":          nm.pollEnabled,
+		"route_socket":          nm.routeSocket > 0,
+		"route_socket_errors":   nm.routeSocketErrors,
+		"last_event_time":       nm.lastEventTime,
+		"time_since_last_event": time.Since(nm.lastEventTime),
+		"health_check_interval": nm.healthCheckInterval,
+		"poll_interval":         nm.pollInterval,
 	}
 }

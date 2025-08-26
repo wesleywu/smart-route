@@ -4,21 +4,23 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/wesleywu/update-routes-native/internal/routing/entities"
 )
 
 func TestRouteError(t *testing.T) {
 	_, network, _ := net.ParseCIDR("192.168.1.0/24")
 	gateway := net.ParseIP("192.168.1.1")
 	
-	err := &RouteError{
-		Type:    ErrPermission,
+	err := &entities.RouteError{
+		Type:    entities.ErrPermission,
 		Network: *network,  // Dereference pointer to get value
 		Gateway: gateway,
 		Cause:   nil,
 	}
 	
-	if err.Type != ErrPermission {
-		t.Errorf("Expected error type %v, got %v", ErrPermission, err.Type)
+	if err.Type != entities.ErrPermission {
+		t.Errorf("Expected error type %v, got %v", entities.ErrPermission, err.Type)
 	}
 	
 	if err.IsRetryable() {
@@ -26,8 +28,8 @@ func TestRouteError(t *testing.T) {
 	}
 	
 	// Test retryable error
-	networkErr := &RouteError{
-		Type:    ErrNetwork,
+	networkErr := &entities.RouteError{
+		Type:    entities.ErrNetwork,
 		Network: *network,  // Dereference pointer to get value
 		Gateway: gateway,
 		Cause:   nil,
@@ -40,14 +42,14 @@ func TestRouteError(t *testing.T) {
 
 func TestErrorTypeString(t *testing.T) {
 	tests := []struct {
-		errorType ErrorType
+		errorType entities.ErrorType
 		expected  string
 	}{
-		{ErrPermission, "Permission"},
-		{ErrNetwork, "Network"},
-		{ErrInvalidRoute, "InvalidRoute"},
-		{ErrSystemCall, "SystemCall"},
-		{ErrTimeout, "Timeout"},
+		{entities.ErrPermission, "Permission"},
+		{entities.ErrNetwork, "Network"},
+		{entities.ErrInvalidRoute, "InvalidRoute"},
+		{entities.ErrSystemCall, "SystemCall"},
+		{entities.ErrTimeout, "Timeout"},
 	}
 	
 	for _, tt := range tests {
@@ -129,7 +131,7 @@ func TestRoute(t *testing.T) {
 	_, network, _ := net.ParseCIDR("192.168.1.0/24")
 	gateway := net.ParseIP("192.168.1.1")
 	
-	route := Route{
+	route := entities.Route{
 		Network:   *network,  // Dereference pointer to get value
 		Gateway:   gateway,
 		Interface: "eth0",
@@ -160,10 +162,10 @@ func TestRouteJob(t *testing.T) {
 	job := RouteJob{
 		Network: network,
 		Gateway: gateway,
-		Action:  ActionAdd,
+		Action:  entities.ActionAdd,
 	}
 	
-	if job.Action != ActionAdd {
+	if job.Action != entities.ActionAdd {
 		t.Errorf("Expected ActionAdd, got %v", job.Action)
 	}
 	

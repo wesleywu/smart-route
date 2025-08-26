@@ -1,80 +1,14 @@
 package routing
 
 import (
-	"fmt"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/wesleywu/update-routes-native/internal/logger"
+	"github.com/wesleywu/update-routes-native/internal/routing/entities"
+	"github.com/wesleywu/update-routes-native/internal/routing/platform"
 )
-
-// RouteManager is an interface that defines the methods for managing routes
-type RouteManager interface {
-	AddRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error
-	DeleteRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error
-	BatchAddRoutes(routes []Route, log *logger.Logger) error
-	BatchDeleteRoutes(routes []Route, log *logger.Logger) error
-	GetDefaultGateway() (net.IP, string, error)
-	ListRoutes() ([]Route, error)
-	Close() error
-}
-
-// Route represents a route entry in the system
-type Route struct {
-	Network   net.IPNet  // Changed from pointer to value
-	Gateway   net.IP
-	Interface string
-	Metric    int
-}
-
-// RouteError represents an error that occurred while managing routes
-type RouteError struct {
-	Type    ErrorType
-	Network net.IPNet  // Changed from pointer to value
-	Gateway net.IP
-	Cause   error
-}
-
-// ErrorType represents the type of error that occurred
-type ErrorType int
-
-// ErrorType constants
-const (
-	ErrPermission ErrorType = iota
-	ErrNetwork
-	ErrInvalidRoute
-	ErrSystemCall
-	ErrTimeout
-)
-
-// String returns a string representation of the error type
-func (e ErrorType) String() string {
-	switch e {
-	case ErrPermission:
-		return "Permission"
-	case ErrNetwork:
-		return "Network"
-	case ErrInvalidRoute:
-		return "InvalidRoute"
-	case ErrSystemCall:
-		return "SystemCall"
-	case ErrTimeout:
-		return "Timeout"
-	default:
-		return "Unknown"
-	}
-}
-
-// Error returns a string representation of the error
-func (re *RouteError) Error() string {
-	return fmt.Sprintf("route error [%s]: %v", re.Type.String(), re.Cause)
-}
-
-// IsRetryable checks if the error is retryable
-func (re *RouteError) IsRetryable() bool {
-	return re.Type == ErrNetwork || re.Type == ErrTimeout
-}
 
 // WorkerPool is a pool of workers that can be used to manage routes
 type WorkerPool struct {
@@ -88,7 +22,7 @@ type WorkerPool struct {
 type RouteJob struct {
 	Network *net.IPNet
 	Gateway net.IP
-	Action  ActionType
+	Action  entities.ActionType
 }
 
 // RouteResult represents the result of a route job
@@ -97,14 +31,6 @@ type RouteResult struct {
 	Error error
 }
 
-// ActionType represents the type of action to be performed on a route
-type ActionType int
-
-// ActionType constants
-const (
-	ActionAdd ActionType = iota
-	ActionDelete
-)
 
 // NewWorkerPool creates a new worker pool
 func NewWorkerPool(workers int) *WorkerPool {
@@ -116,7 +42,7 @@ func NewWorkerPool(workers int) *WorkerPool {
 }
 
 // Start starts the worker pool
-func (wp *WorkerPool) Start(rm RouteManager, log *logger.Logger) {
+func (wp *WorkerPool) Start(rm entities.RouteManager, log *logger.Logger) {
 	for i := 0; i < wp.workers; i++ {
 		wp.wg.Add(1)
 		go wp.worker(rm, log)
@@ -141,16 +67,16 @@ func (wp *WorkerPool) Results() <-chan RouteResult {
 }
 
 // worker is a worker function that performs the actual route management
-func (wp *WorkerPool) worker(rm RouteManager, log *logger.Logger) {
+func (wp *WorkerPool) worker(rm entities.RouteManager, log *logger.Logger) {
 	defer wp.wg.Done()
 	
 	for job := range wp.jobs {
 		var err error
 		
 		switch job.Action {
-		case ActionAdd:
+		case entities.ActionAdd:
 			err = rm.AddRoute(job.Network, job.Gateway, log)
-		case ActionDelete:
+		case entities.ActionDelete:
 			err = rm.DeleteRoute(job.Network, job.Gateway, log)
 		}
 		
@@ -164,8 +90,8 @@ func (wp *WorkerPool) worker(rm RouteManager, log *logger.Logger) {
 }
 
 // NewRouteManager creates a new route manager
-func NewRouteManager(concurrencyLimit int, maxRetries int) (RouteManager, error) {
-	return newPlatformRouteManager(concurrencyLimit, maxRetries)
+func NewRouteManager(concurrencyLimit int, maxRetries int) (entities.RouteManager, error) {
+	return platform.NewPlatformRouteManager(concurrencyLimit, maxRetries)
 }
 
 // Metrics represents the metrics for the route manager
