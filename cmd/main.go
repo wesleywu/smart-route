@@ -9,7 +9,6 @@ import (
 	"github.com/wesleywu/update-routes-native/internal/config"
 	"github.com/wesleywu/update-routes-native/internal/daemon"
 	"github.com/wesleywu/update-routes-native/internal/logger"
-	"github.com/wesleywu/update-routes-native/internal/network"
 	"github.com/wesleywu/update-routes-native/internal/routing"
 )
 
@@ -106,20 +105,20 @@ func runOnce(_ *cobra.Command, _ []string) {
 	log := logger.New(cfg)
 	log.Info("Starting one-time route setup", "version", version)
 
-	gateway, iface, err := network.GetDefaultGateway()
-	if err != nil {
-		log.Error("Failed to get default gateway", "error", err)
-		os.Exit(1)
-	}
-
-	log.Info("Default gateway detected", "gateway", gateway.String(), "interface", iface)
-
 	rm, err := routing.NewRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
 	if err != nil {
 		log.Error("Failed to create route manager", "error", err)
 		os.Exit(1)
 	}
 	defer rm.Close()
+
+	gateway, iface, err := rm.GetDefaultGateway()
+	if err != nil {
+		log.Error("Failed to get default gateway", "error", err)
+		os.Exit(1)
+	}
+
+	log.Info("Default gateway detected", "gateway", gateway.String(), "interface", iface)
 
 	chnRoutes, err := config.LoadChnRoutes(cfg.ChnRouteFile)
 	if err != nil {
@@ -247,9 +246,14 @@ func showVersion(cmd *cobra.Command, args []string) {
 	fmt.Printf("Runtime: %s\n", runtime.Version())
 	fmt.Printf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 
-	gateway, iface, err := network.GetDefaultGateway()
+	// Try to show current gateway information
+	rm, err := routing.NewRouteManager(1, 1) // minimal settings for quick check
 	if err == nil {
-		fmt.Printf("Current Gateway: %s (%s)\n", gateway.String(), iface)
+		defer rm.Close()
+		gateway, iface, err := rm.GetDefaultGateway()
+		if err == nil {
+			fmt.Printf("Current Gateway: %s (%s)\n", gateway.String(), iface)
+		}
 	}
 }
 
@@ -284,7 +288,14 @@ func testConfiguration(cmd *cobra.Command, args []string) {
 	log.Debug("Chinese DNS loading details", "file", cfg.ChnDNSFile, "servers", chnDNS.Size())
 	fmt.Printf("✅ Chinese DNS loaded: %d servers\n", chnDNS.Size())
 
-	gateway, iface, err := network.GetDefaultGateway()
+	rm, err := routing.NewRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Failed to create route manager: %v\n", err)
+		os.Exit(1)
+	}
+	defer rm.Close()
+
+	gateway, iface, err := rm.GetDefaultGateway()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Failed to get default gateway: %v\n", err)
 		os.Exit(1)

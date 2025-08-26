@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -52,7 +54,7 @@ func (rm *WindowsRouteManager) GetDefaultGateway() (net.IP, string, error) {
 		return nil, "", fmt.Errorf("failed to get default route: %w", err)
 	}
 
-	return parseDefaultRouteWindows(string(output))
+	return rm.parseDefaultRouteWindows(string(output))
 }
 
 func (rm *WindowsRouteManager) ListRoutes() ([]Route, error) {
@@ -256,8 +258,29 @@ func (rm *WindowsRouteManager) batchOperation(routes []Route, action ActionType)
 	return nil
 }
 
-func parseDefaultRouteWindows(output string) (net.IP, string, error) {
-	return nil, "", fmt.Errorf("not implemented")
+func (rm *WindowsRouteManager) parseDefaultRouteWindows(output string) (net.IP, string, error) {
+	// Parse Windows route output format
+	// Looking for lines like: "0.0.0.0 0.0.0.0 192.168.1.1 interface_index metric"
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 5 && fields[0] == "0.0.0.0" && fields[1] == "0.0.0.0" {
+			gateway := net.ParseIP(fields[2])
+			if gateway == nil {
+				continue
+			}
+			
+			ifaceIndex, err := strconv.Atoi(fields[4])
+			if err != nil {
+				continue
+			}
+			
+			iface := fmt.Sprintf("Interface%d", ifaceIndex)
+			return gateway, iface, nil
+		}
+	}
+
+	return nil, "", fmt.Errorf("no default gateway found")
 }
 
 func parseRouteOutput(output string) ([]Route, error) {

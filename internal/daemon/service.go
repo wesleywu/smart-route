@@ -12,7 +12,6 @@ import (
 
 	"github.com/wesleywu/update-routes-native/internal/config"
 	"github.com/wesleywu/update-routes-native/internal/logger"
-	"github.com/wesleywu/update-routes-native/internal/network"
 	"github.com/wesleywu/update-routes-native/internal/routing"
 )
 
@@ -20,7 +19,7 @@ import (
 type ServiceManager struct {
 	config       *config.Config
 	logger       *logger.Logger
-	monitor      *network.NetworkMonitor
+	monitor      *routing.NetworkMonitor
 	router       routing.RouteManager
 	routeSwitch  *routing.RouteSwitch
 	chnRoutes    *config.IPSet
@@ -55,7 +54,7 @@ func NewServiceManager(cfg *config.Config, log *logger.Logger) (*ServiceManager,
 		return nil, fmt.Errorf("failed to create route manager: %w", err)
 	}
 
-	sm.monitor, err = network.NewNetworkMonitor(cfg.MonitorInterval)
+	sm.monitor, err = routing.NewNetworkMonitor(cfg.MonitorInterval, sm.router)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network monitor: %w", err)
 	}
@@ -97,7 +96,7 @@ func (sm *ServiceManager) Start() error {
 	sm.logger.ServiceStart("1.0.0", fmt.Sprintf("%d", os.Getpid()))
 	sm.logger.ConfigLoaded(sm.config.ChnRouteFile, sm.chnRoutes.Size(), sm.chnDNS.Size())
 
-	gw, iface, err := network.GetDefaultGateway()
+	gw, iface, err := sm.router.GetDefaultGateway()
 	if err != nil {
 		return fmt.Errorf("failed to get default gateway: %w", err)
 	}
@@ -179,7 +178,7 @@ func (sm *ServiceManager) serviceLoop() {
 }
 
 // handleNetworkEvent handles network events
-func (sm *ServiceManager) handleNetworkEvent(event network.NetworkEvent) {
+func (sm *ServiceManager) handleNetworkEvent(event routing.NetworkEvent) {
 	gwStr := "<nil>"
 	if event.Gateway != nil {
 		gwStr = event.Gateway.String()
@@ -193,13 +192,13 @@ func (sm *ServiceManager) handleNetworkEvent(event network.NetworkEvent) {
 	)
 
 	switch event.Type {
-	case network.GatewayChanged:
+	case routing.GatewayChanged:
 		if event.Gateway != nil {
 			if err := sm.handleGatewayChange(event.Gateway); err != nil {
 				sm.logger.Error("failed to handle gateway change", "error", err)
 			}
 		}
-	case network.AddressChanged:
+	case routing.AddressChanged:
 		// For address changes, also check if gateway has changed
 		// This is a backup mechanism in case gateway change detection is not perfect
 		go func() {
@@ -257,7 +256,7 @@ func (sm *ServiceManager) checkAndHandleGatewayChange() {
 	sm.lastCheck = now
 	sm.mutex.Unlock()
 
-	currentGW, currentIface, err := network.GetDefaultGateway()
+	currentGW, currentIface, err := sm.router.GetDefaultGateway()
 	if err != nil {
 		sm.logger.Error("failed to get current gateway during check", "error", err)
 		return

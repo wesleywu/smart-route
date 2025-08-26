@@ -66,15 +66,9 @@ func (rm *BSDRouteManager) BatchDeleteRoutes(routes []Route, log *logger.Logger)
 
 // GetDefaultGateway gets the default gateway from the system
 func (rm *BSDRouteManager) GetDefaultGateway() (net.IP, string, error) {
-	// Currently using command-line method
-	// TODO: Implement native method using route socket for consistency
-	cmd := exec.Command("route", "-n", "get", "default")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to get default route: %w", err)
-	}
-
-	return parseDefaultRoute(string(output))
+	// ALWAYS look for physical interface gateway, never rely on default route
+	// In VPN scenarios, default route will point to VPN, but we need the physical gateway
+	return rm.getPhysicalGateway()
 }
 
 // ListRoutes lists all routes from the system
@@ -167,31 +161,6 @@ func (rm *BSDRouteManager) batchOperation(routes []Route, action ActionType, log
 	return rm.batchOperationNative(routes, action, log)
 }
 
-func parseDefaultRoute(output string) (net.IP, string, error) {
-	lines := strings.Split(output, "\n")
-	var gateway net.IP
-	var iface string
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "gateway:") {
-			gatewayStr := strings.TrimSpace(strings.TrimPrefix(line, "gateway:"))
-			gateway = net.ParseIP(gatewayStr)
-			if gateway == nil {
-				return nil, "", fmt.Errorf("invalid gateway IP: %s", gatewayStr)
-			}
-		}
-		if strings.HasPrefix(line, "interface:") {
-			iface = strings.TrimSpace(strings.TrimPrefix(line, "interface:"))
-		}
-	}
-
-	if gateway == nil {
-		return nil, "", fmt.Errorf("no default gateway found in output")
-	}
-
-	return gateway, iface, nil
-}
 
 func parseNetstatOutput(output string) ([]Route, error) {
 	var routes []Route
@@ -410,4 +379,168 @@ func (rm *BSDRouteManager) deleteRouteCommand(network *net.IPNet, gateway net.IP
 	
 	log.Debug("Command line route delete succeeded", "target", target, "gateway", gateway.String())
 	return nil
+}
+
+// getPhysicalGateway gets the physical gateway for macOS/BSD systems
+func (rm *BSDRouteManager) getPhysicalGateway() (net.IP, string, error) {
+	// Strategy 1: First try to get gateway from active network interface (most reliable for detecting changes)
+	gateway, iface, err := rm.getGatewayFromInterfaces()
+	if err == nil {
+		return gateway, iface, nil
+	}
+	
+	// Strategy 2: If interface method fails, fall back to route table analysis
+	cmd := exec.Command("netstat", "-rn")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get routing table: %w", err)
+	}
+
+	lines := strings.Split(string(output), "\n")
+	
+	// Look for any existing routes through physical interfaces
+	gatewayCount := make(map[string]int)
+	gatewayToIface := make(map[string]string)
+	
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 4 {
+			gatewayStr := fields[1]
+			iface := fields[3]
+			
+			// Only consider physical interfaces (typically en0, en1, eth0, etc.)
+			if !rm.isPhysicalInterface(iface) {
+				continue
+			}
+			
+			// Skip link-local gateways
+			if strings.HasPrefix(gatewayStr, "link#") {
+				continue
+			}
+			
+			// Check if this is a valid IP gateway
+			gateway := net.ParseIP(gatewayStr)
+			if gateway != nil && rm.isPrivateIP(gateway) {
+				gatewayCount[gatewayStr]++
+				gatewayToIface[gatewayStr] = iface
+			}
+		}
+	}
+	
+	// Find the most commonly used physical gateway
+	var bestGateway string
+	maxCount := 0
+	for gw, count := range gatewayCount {
+		if count > maxCount {
+			maxCount = count
+			bestGateway = gw
+		}
+	}
+	
+	if bestGateway != "" {
+		return net.ParseIP(bestGateway), gatewayToIface[bestGateway], nil
+	}
+	
+	return nil, "", fmt.Errorf("no physical gateway found")
+}
+
+// isPhysicalInterface checks if the interface is a physical interface
+func (rm *BSDRouteManager) isPhysicalInterface(iface string) bool {
+	// Physical interfaces: en0, en1, eth0, eth1, etc.
+	// Skip VPN: utun, tun, tap, ppp, ipsec, etc.
+	// Skip system: lo, awdl, bridge, etc.
+	
+	if strings.HasPrefix(iface, "en") || strings.HasPrefix(iface, "eth") {
+		return true
+	}
+	
+	// Skip VPN interfaces
+	vpnPrefixes := []string{"utun", "tun", "tap", "ppp", "ipsec", "wg"}
+	for _, prefix := range vpnPrefixes {
+		if strings.HasPrefix(iface, prefix) {
+			return false
+		}
+	}
+	
+	// Skip system interfaces
+	systemPrefixes := []string{"lo", "awdl", "bridge", "gif", "stf"}
+	for _, prefix := range systemPrefixes {
+		if strings.HasPrefix(iface, prefix) {
+			return false
+		}
+	}
+	
+	return false
+}
+
+// isPrivateIP checks if the IP is a private IP
+func (rm *BSDRouteManager) isPrivateIP(ip net.IP) bool {
+	// Check if IP is in private ranges: 10.x.x.x, 172.16-31.x.x, 192.168.x.x
+	if ip4 := ip.To4(); ip4 != nil {
+		// 10.0.0.0/8
+		if ip4[0] == 10 {
+			return true
+		}
+		// 172.16.0.0/12
+		if ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 {
+			return true
+		}
+		// 192.168.0.0/16
+		if ip4[0] == 192 && ip4[1] == 168 {
+			return true
+		}
+	}
+	return false
+}
+
+// getGatewayFromInterfaces gets the gateway from interfaces
+func (rm *BSDRouteManager) getGatewayFromInterfaces() (net.IP, string, error) {
+	// Get active physical interfaces
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get network interfaces: %w", err)
+	}
+	
+	// Find the primary active physical interface
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp != 0 && rm.isPhysicalInterface(iface.Name) {
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			
+			// Check if this interface has a valid IP
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+					if ip4 := ipnet.IP.To4(); ip4 != nil && rm.isPrivateIP(ip4) {
+						// Calculate gateway from subnet
+						// Most networks use .1 as gateway
+						gateway := rm.calculateGatewayFromSubnet(ipnet)
+						if gateway != nil {
+							return gateway, iface.Name, nil
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	return nil, "", fmt.Errorf("no physical gateway found")
+}
+
+// calculateGatewayFromSubnet calculates the gateway from the subnet
+func (rm *BSDRouteManager) calculateGatewayFromSubnet(ipnet *net.IPNet) net.IP {
+	ip := ipnet.IP.To4()
+	if ip == nil {
+		return nil
+	}
+	
+	// For immediate detection, calculate likely gateway (.1 in the network)
+	// This is fast and works for most networks
+	network := ip.Mask(ipnet.Mask)
+	gateway := make(net.IP, 4)
+	copy(gateway, network)
+	gateway[3] = 1
+	
+	return gateway
 }

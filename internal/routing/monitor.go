@@ -1,4 +1,4 @@
-package network
+package routing
 
 import (
 	"fmt"
@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// NetworkMonitor is a monitor for the network
 type NetworkMonitor struct {
 	gateway        net.IP
 	defaultIface   string
@@ -21,7 +22,7 @@ type NetworkMonitor struct {
 	pollInterval   time.Duration
 	lastRouteCheck time.Time
 	
-	// 智能轮询控制
+	// Smart polling control
 	pollEnabled       bool
 	pollTicker        *time.Ticker
 	pollStopChan      chan struct{}
@@ -29,8 +30,12 @@ type NetworkMonitor struct {
 	routeSocketErrors int
 	maxSocketErrors   int
 	healthCheckInterval time.Duration
+	
+	// RouteManager for getting gateway information
+	routeManager RouteManager
 }
 
+// NetworkEvent is an event from the network monitor
 type NetworkEvent struct {
 	Type      EventType
 	Interface string
@@ -38,15 +43,21 @@ type NetworkEvent struct {
 	Timestamp time.Time
 }
 
+// EventType is the type of event
 type EventType int
 
 const (
+	// GatewayChanged is a gateway change event
 	GatewayChanged EventType = iota
+	// InterfaceUp is an interface up event
 	InterfaceUp
+	// InterfaceDown is an interface down event
 	InterfaceDown
+	// AddressChanged is an address change event
 	AddressChanged
 )
 
+// String returns the string representation of the event type
 func (e EventType) String() string {
 	switch e {
 	case GatewayChanged:
@@ -62,8 +73,13 @@ func (e EventType) String() string {
 	}
 }
 
-func NewNetworkMonitor(pollInterval time.Duration) (*NetworkMonitor, error) {
-	gateway, iface, err := GetDefaultGateway()
+// NewNetworkMonitor creates a new NetworkMonitor
+func NewNetworkMonitor(pollInterval time.Duration, routeManager RouteManager) (*NetworkMonitor, error) {
+	if routeManager == nil {
+		return nil, fmt.Errorf("routeManager cannot be nil")
+	}
+	
+	gateway, iface, err := routeManager.GetDefaultGateway()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get initial gateway: %w", err)
 	}
@@ -75,13 +91,15 @@ func NewNetworkMonitor(pollInterval time.Duration) (*NetworkMonitor, error) {
 		stopChan:            make(chan struct{}),
 		pollInterval:        pollInterval,
 		pollStopChan:        make(chan struct{}),
-		pollEnabled:         false, // 默认禁用轮询
-		maxSocketErrors:     3,     // 连续3次socket错误后启用轮询
-		healthCheckInterval: 30 * time.Second, // 30秒健康检查间隔
+		pollEnabled:         false, // Default to disable polling
+		maxSocketErrors:     3,     // Enable polling after 3 consecutive socket errors
+		healthCheckInterval: 30 * time.Second, // 30 second health check interval
 		lastEventTime:       time.Now(),
+		routeManager:        routeManager,
 	}, nil
 }
 
+// Start starts the network monitor
 func (nm *NetworkMonitor) Start() error {
 	nm.mutex.Lock()
 	defer nm.mutex.Unlock()
@@ -90,26 +108,28 @@ func (nm *NetworkMonitor) Start() error {
 		return fmt.Errorf("network monitor is already running")
 	}
 
-	// 尝试创建route socket进行实时监控
+	// Try to create route socket for real-time monitoring
 	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
 		sock, err := unix.Socket(unix.AF_ROUTE, unix.SOCK_RAW, unix.AF_UNSPEC)
 		if err != nil {
-			// socket创建失败，立即启用轮询作为备用
-			fmt.Printf("Failed to create route socket, enabling polling: %v\n", err)
+			// socket创建失败，启用轮询作为备用
+			fmt.Printf("Failed to create route socket, enabling polling as fallback: %v\n", err)
 			nm.pollEnabled = true
 		} else {
 			nm.routeSocket = sock
+			fmt.Printf("Route socket monitoring started (real-time events)\n")
 			go nm.monitorRouteSocket()
 		}
 	} else {
-		// 非支持平台，启用轮询
+		// Non-supported platform, enable polling
+		fmt.Printf("Platform %s not supported for route socket, enabling polling\n", runtime.GOOS)
 		nm.pollEnabled = true
 	}
 
-	// 启动健康检查协程
+	// Start health check goroutine
 	go nm.healthCheck()
 	
-	// 如果需要轮询，则启动轮询
+	// If polling is enabled, start polling
 	if nm.pollEnabled {
 		nm.startPolling()
 	}
@@ -118,6 +138,7 @@ func (nm *NetworkMonitor) Start() error {
 	return nil
 }
 
+// Stop stops the network monitor
 func (nm *NetworkMonitor) Stop() error {
 	nm.mutex.Lock()
 	defer nm.mutex.Unlock()
@@ -140,10 +161,12 @@ func (nm *NetworkMonitor) Stop() error {
 	return nil
 }
 
+// Events returns the channel for network events
 func (nm *NetworkMonitor) Events() <-chan NetworkEvent {
 	return nm.eventChan
 }
 
+// GetCurrentGateway returns the current gateway and interface
 func (nm *NetworkMonitor) GetCurrentGateway() (net.IP, string) {
 	nm.mutex.RLock()
 	defer nm.mutex.RUnlock()
@@ -154,6 +177,7 @@ func (nm *NetworkMonitor) GetCurrentGateway() (net.IP, string) {
 	return gateway, nm.defaultIface
 }
 
+// monitorRouteSocket monitors the route socket
 func (nm *NetworkMonitor) monitorRouteSocket() {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		return
@@ -165,22 +189,30 @@ func (nm *NetworkMonitor) monitorRouteSocket() {
 		case <-nm.stopChan:
 			return
 		default:
+			// Use blocking read to avoid busy waiting
 			n, err := unix.Read(nm.routeSocket, buffer)
 			if err != nil {
-				nm.mutex.Lock()
-				nm.routeSocketErrors++
-				if nm.routeSocketErrors >= nm.maxSocketErrors && !nm.pollEnabled {
-					fmt.Printf("Route socket errors exceeded threshold (%d), enabling polling\n", nm.routeSocketErrors)
-					nm.pollEnabled = true
-					nm.mutex.Unlock()
-					nm.startPolling()
-				} else {
+				// Check if the error is due to monitor stop
+				select {
+				case <-nm.stopChan:
+					return
+				default:
+				}
+				
+				// Only count actual read errors
+				if err != unix.EAGAIN && err != unix.EWOULDBLOCK {
+					nm.mutex.Lock()
+					nm.routeSocketErrors++
+					fmt.Printf("Route socket read error (%d/%d): %v\n", nm.routeSocketErrors, nm.maxSocketErrors, err)
 					nm.mutex.Unlock()
 				}
+				
+				// Short delay before retrying to avoid busy waiting
+				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 
-			// 重置错误计数
+			// 成功读取数据，重置错误计数
 			nm.mutex.Lock()
 			nm.routeSocketErrors = 0
 			nm.lastEventTime = time.Now()
@@ -197,7 +229,9 @@ func (nm *NetworkMonitor) monitorRouteSocket() {
 	}
 }
 
-// 健康检查：监控实时事件的有效性，必要时启用轮询
+// healthCheck is a health check for the network monitor
+// It only enables polling when the route socket has consecutive errors
+// Note: No network events are normal and should not trigger polling
 func (nm *NetworkMonitor) healthCheck() {
 	ticker := time.NewTicker(nm.healthCheckInterval)
 	defer ticker.Stop()
@@ -208,33 +242,41 @@ func (nm *NetworkMonitor) healthCheck() {
 			return
 		case <-ticker.C:
 			nm.mutex.RLock()
-			timeSinceLastEvent := time.Since(nm.lastEventTime)
-			pollEnabled := nm.pollEnabled
 			routeSocketErrors := nm.routeSocketErrors
+			pollEnabled := nm.pollEnabled
 			nm.mutex.RUnlock()
 
-			// 如果超过健康检查间隔的2倍时间没有收到事件，可能实时监控有问题
-			if !pollEnabled && timeSinceLastEvent > 2*nm.healthCheckInterval {
-				fmt.Printf("No route events for %v, enabling polling as backup\n", timeSinceLastEvent)
+			// 只有在route socket连续出错时才启用轮询
+			// 没有网络变化时不收到事件是正常的，不应该视为错误
+			if !pollEnabled && routeSocketErrors >= nm.maxSocketErrors {
+				fmt.Printf("Route socket has %d errors, enabling polling as backup\n", routeSocketErrors)
 				nm.mutex.Lock()
 				nm.pollEnabled = true
 				nm.mutex.Unlock()
 				nm.startPolling()
 			}
 
-			// 如果route socket已经恢复且轮询已启用一段时间，尝试恢复纯事件模式
-			if pollEnabled && routeSocketErrors == 0 && timeSinceLastEvent < nm.healthCheckInterval/2 {
-				fmt.Printf("Route socket appears healthy, disabling polling\n")
-				nm.mutex.Lock()
-				nm.pollEnabled = false
-				nm.mutex.Unlock()
-				nm.stopPolling()
+			// 如果route socket恢复正常，可以考虑禁用轮询
+			if pollEnabled && routeSocketErrors == 0 {
+				// 等待一段时间确保socket稳定后再禁用轮询
+				time.Sleep(5 * time.Second)
+				nm.mutex.RLock()
+				stillNoErrors := nm.routeSocketErrors == 0
+				nm.mutex.RUnlock()
+				
+				if stillNoErrors {
+					fmt.Printf("Route socket appears stable, disabling polling\n")
+					nm.mutex.Lock()
+					nm.pollEnabled = false
+					nm.mutex.Unlock()
+					nm.stopPolling()
+				}
 			}
 		}
 	}
 }
 
-// 启动轮询
+// startPolling starts polling
 func (nm *NetworkMonitor) startPolling() {
 	nm.mutex.Lock()
 	defer nm.mutex.Unlock()
@@ -263,7 +305,7 @@ func (nm *NetworkMonitor) startPolling() {
 	fmt.Printf("Polling started with interval %v\n", nm.pollInterval)
 }
 
-// 停止轮询
+// stopPolling stops polling
 func (nm *NetworkMonitor) stopPolling() {
 	if nm.pollTicker != nil {
 		close(nm.pollStopChan)
@@ -272,8 +314,9 @@ func (nm *NetworkMonitor) stopPolling() {
 	}
 }
 
+// checkGatewayChange checks for gateway changes
 func (nm *NetworkMonitor) checkGatewayChange() {
-	currentGateway, currentIface, err := GetDefaultGateway()
+	currentGateway, currentIface, err := nm.routeManager.GetDefaultGateway()
 	if err != nil {
 		// Add debug info - this should rarely happen now
 		fmt.Printf("DEBUG: Failed to get gateway during check: %v\n", err)
@@ -312,6 +355,7 @@ func (nm *NetworkMonitor) checkGatewayChange() {
 	}
 }
 
+// parseRouteMessage parses the route message
 func (nm *NetworkMonitor) parseRouteMessage(data []byte) *NetworkEvent {
 	if len(data) < 4 {
 		return nil
@@ -337,7 +381,7 @@ func (nm *NetworkMonitor) parseRouteMessage(data []byte) *NetworkEvent {
 	return nil // Don't return the unparsed event to avoid spam
 }
 
-// 获取监控器状态
+// GetMonitorStatus gets the monitor status
 func (nm *NetworkMonitor) GetMonitorStatus() map[string]interface{} {
 	nm.mutex.RLock()
 	defer nm.mutex.RUnlock()

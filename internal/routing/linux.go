@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,7 +55,7 @@ func (rm *LinuxRouteManager) GetDefaultGateway() (net.IP, string, error) {
 		return nil, "", fmt.Errorf("failed to get default route: %w", err)
 	}
 
-	return parseDefaultRouteLinux(string(output))
+	return rm.parseDefaultRouteLinux(string(output))
 }
 
 func (rm *LinuxRouteManager) ListRoutes() ([]Route, error) {
@@ -199,8 +200,30 @@ func (rm *LinuxRouteManager) batchOperation(routes []Route, action ActionType, l
 	return nil
 }
 
-func parseDefaultRouteLinux(output string) (net.IP, string, error) {
-	return nil, "", fmt.Errorf("not implemented")
+func (rm *LinuxRouteManager) parseDefaultRouteLinux(output string) (net.IP, string, error) {
+	// Parse "default via 192.168.1.1 dev eth0" format
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 5 && fields[0] == "default" && fields[1] == "via" {
+			gateway := net.ParseIP(fields[2])
+			if gateway == nil {
+				continue
+			}
+			
+			var iface string
+			for i, field := range fields {
+				if field == "dev" && i+1 < len(fields) {
+					iface = fields[i+1]
+					break
+				}
+			}
+			
+			return gateway, iface, nil
+		}
+	}
+
+	return nil, "", fmt.Errorf("no default gateway found")
 }
 
 func parseIPRouteOutput(output string) ([]Route, error) {
