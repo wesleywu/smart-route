@@ -38,7 +38,10 @@ type RouteManager interface {
 	DeleteRoute(network *net.IPNet, gateway net.IP, log *logger.Logger) error
 	BatchAddRoutes(routes []Route, log *logger.Logger) error
 	BatchDeleteRoutes(routes []Route, log *logger.Logger) error
+	// GetDefaultGateway gets the physical gateway from the system (for route management)
 	GetDefaultGateway() (net.IP, string, error)
+	// GetCurrentDefaultRoute gets the current default route (including VPN) from the system
+	GetCurrentDefaultRoute() (net.IP, string, error)
 	ListRoutes() ([]Route, error)
 	Close() error
 }

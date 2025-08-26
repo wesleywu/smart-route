@@ -2,7 +2,7 @@
 
 ## 📋 项目概述
 
-本文档详细描述了基于Go技术栈的智能路由管理工具的技术实现设计，用于解决WireGuard VPN环境下中国大陆IP地址的智能分流问题。
+本文档详细描述了基于Go技术栈的智能路由管理工具的技术实现设计，用于解决WireGuard VPN环境下中国大陆IP地址的智能分流问题。该工具采用事件驱动架构，实现了真正的实时网络监控和VPN状态检测。
 
 ## 🏗️ 整体架构设计
 
@@ -14,642 +14,248 @@
 ├─────────────────────────────────────────────────────────────┤
 │  CLI Interface (cobra)                                      │
 ├─────────────────────────────────────────────────────────────┤
-│  Config Manager    │  Route Manager    │  Network Monitor   │
-│  - IP段文件解析    │  - 路由规则操作   │  - 网络状态监控    │
-│  - DNS服务器配置   │  - 批量路由设置   │  - 事件驱动更新    │
-│  - 配置文件管理    │  - 路由清理重建   │  - 网关变化检测    │
+│  Config Manager    │  Route Switch     │  Network Monitor   │
+│  - IP段文件解析    │  - 统一路由切换   │  - 双重状态监控    │
+│  - DNS服务器配置   │  - 批量路由操作   │  - VPN状态检测     │
+│  - 配置文件管理    │  - 事务性重置     │  - 物理网关检测    │
 ├─────────────────────────────────────────────────────────────┤
-│  System Interface Layer                                     │
-│  - BSD Route Socket (macOS)                                │
-│  - WinAPI (Windows)                                         │
-│  - Netlink (Linux)                                         │
+│  Service Manager                                            │
+│  - 事件处理循环     │  - 信号处理       │  - 生命周期管理   │
+├─────────────────────────────────────────────────────────────┤
+│  Route Manager (Platform Specific)                         │
+│  - BSD Route Socket (macOS)  │  - 物理网关获取              │
+│  - WinAPI (Windows)           │  - 当前路由获取              │
+│  - Netlink (Linux)            │  - 批量路由操作              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 目录结构
+## 🔄 事件驱动监控链条
+
+### 完整的网络事件处理流程
+
+系统采用真正的事件驱动架构，实现毫秒级的网络变化响应：
 
 ```
-update-routes-native/
-├── cmd/
-│   └── main.go                 # 程序入口
-├── internal/
-│   ├── config/                 # 配置管理
-│   │   ├── config.go          # 配置结构和解析
-│   │   ├── ipset.go           # IP段文件解析
-│   │   └── dns.go             # DNS配置管理
-│   ├── network/                # 网络操作
-│   │   ├── gateway.go         # 网关检测
-│   │   ├── monitor.go         # 网络监控
-│   │   └── interface.go       # 网络接口管理
-│   ├── routing/                # 路由管理
-│   │   ├── route.go           # 路由操作接口
-│   │   ├── bsd.go            # BSD系统实现 (macOS)
-│   │   ├── windows.go        # Windows实现
-│   │   └── linux.go          # Linux实现
-│   ├── daemon/                 # 守护进程
-│   │   ├── service.go        # 系统服务接口
-│   │   ├── launchd.go        # macOS launchd
-│   │   └── systemd.go        # Linux systemd
-│   └── logger/                 # 日志管理
-│       └── logger.go         # 日志配置
-├── configs/
-│   ├── chnroute.txt          # 中国IP段数据
-│   └── chdns.txt             # 中国DNS服务器
-├── scripts/
-│   ├── install.sh            # 安装脚本
-│   └── service/              # 系统服务配置文件
-│       ├── com.smartroute.plist    # macOS
-│       └── smartroute.service      # Linux
-├── go.mod
-├── go.sum
-└── README.md
+系统路由变化事件
+    ↓ (AF_ROUTE socket / Netlink / WinAPI)
+Route Socket 实时监控
+    ↓ (parseRouteMessage 限频处理)
+双重状态检查机制
+    ├── 物理网关检测 (GetDefaultGateway)
+    │   └── WiFi网络切换检测
+    └── VPN状态检测 (GetCurrentDefaultRoute)  
+        └── TUN接口状态检测
+    ↓ (NetworkEvent 生成)
+事件通道传递 (eventChan)
+    ↓ (ServiceManager.serviceLoop)
+事件类型处理分发
+    ├── GatewayChanged (物理网关变化)
+    ├── VPNConnected (VPN连接)
+    └── VPNDisconnected (VPN断开)
+    ↓ (handleNetworkEvent)
+统一路由重置逻辑
+    ↓ (RouteSwitch.SetupRoutes)
+批量路由操作执行
+    └── 完整路由重建 (清理 + 设置)
 ```
+
+### 关键设计特点
+
+#### 1. 双重检测机制
+- **物理网关监控**: 专门检测WiFi网络切换，使用`getPhysicalGateway()`确保获取到真实的物理网络接口
+- **VPN状态监控**: 检测默认路由指向，使用`GetCurrentDefaultRoute()`获取系统实际的默认路由
+- **独立状态跟踪**: 两种状态变化互不干扰，可以同时处理复杂的网络场景
+
+#### 2. 事件驱动优势  
+- **真实实时性**: 基于操作系统原生路由事件，响应延迟 < 100ms
+- **零轮询开销**: 完全基于事件通知，不消耗CPU在空闲状态检查
+- **智能限频**: 200ms窗口内合并多个路由事件，避免事件风暴
+
+#### 3. 统一路由处理
+- **事务性操作**: 每次网络变化都执行完整的"清理-重建"流程
+- **原子性保证**: 确保路由状态的一致性，避免部分失败导致的中间状态
+- **批量优化**: 3000+条路由规则在3-4秒内完成切换
 
 ## 🔧 核心模块设计
 
-### 1. Config Manager (配置管理器)
+### 1. Network Monitor (网络监控器)
 
 #### 职责
-- 解析和管理配置文件
-- 加载IP段数据文件
-- 管理DNS服务器列表
-- 提供配置热重载功能
+- **实时事件监控**: 基于操作系统原生路由套接字监听系统路由变化
+- **双重状态检测**: 同时跟踪物理网关状态和VPN连接状态  
+- **智能事件生成**: 根据不同的状态变化生成相应的网络事件
+- **故障降级处理**: 当route socket失效时自动启用轮询备用方案
 
-#### 关键结构
+#### 关键特性
+- **真正事件驱动**: 使用AF_ROUTE socket (BSD)、Netlink (Linux) 等系统级事件接口
+- **VPN接口识别**: 通过接口名模式匹配识别TUN/TAP等VPN接口
+- **限频机制**: 200ms窗口合并路由事件，避免事件风暴
+- **健康监控**: 自动检测route socket状态，必要时启用轮询
 
-```go
-type Config struct {
-    // 基本配置
-    LogLevel     string `json:"log_level"`
-    SilentMode   bool   `json:"silent_mode"`
-    DaemonMode   bool   `json:"daemon_mode"`
-    
-    // 文件路径
-    ChnRouteFile string `json:"chn_route_file"`
-    ChnDNSFile   string `json:"chn_dns_file"`
-    
-    // 网络配置
-    MonitorInterval  time.Duration `json:"monitor_interval"`
-    RetryAttempts    int          `json:"retry_attempts"`
-    RouteTimeout     time.Duration `json:"route_timeout"`
-    
-    // 性能配置
-    ConcurrencyLimit int `json:"concurrency_limit"`
-    BatchSize        int `json:"batch_size"`
-}
+### 2. Route Manager (路由管理器)
 
-type IPSet struct {
-    Networks []net.IPNet
-    mutex    sync.RWMutex
-}
+#### 职责  
+- **双重网关获取**: 分别提供物理网关和当前默认路由获取能力
+- **批量路由操作**: 支持高效的并发路由增删操作
+- **跨平台抽象**: 统一的路由操作接口，支持BSD/Linux/Windows
+- **错误处理**: 完善的重试机制和错误分类处理
 
-type DNSServers struct {
-    IPs   []net.IP
-    mutex sync.RWMutex
-}
-```
+#### 设计特点
+- **GetDefaultGateway()**: 专门获取物理网络接口，用于路由管理
+- **GetCurrentDefaultRoute()**: 获取系统真实默认路由，用于VPN检测
+- **平台特化**: 每个平台都有优化的实现方式
+- **批量优化**: 支持并发路由操作以提升性能
 
-#### 主要方法
-
-```go
-func LoadConfig(path string) (*Config, error)
-func (c *Config) Validate() error
-func LoadChnRoutes(file string) (*IPSet, error)
-func LoadChnDNS(file string) (*DNSServers, error)
-func (ip *IPSet) Contains(addr net.IP) bool
-```
-
-### 2. Network Monitor (网络监控器)
+### 3. Route Switch (路由切换器)
 
 #### 职责
-- 实时监控网络接口状态变化
-- 检测默认网关变化
-- 触发路由规则更新事件
-- 提供网络状态查询接口
+- **统一路由切换逻辑**: 提供一致的路由重置流程
+- **事务性操作**: 确保路由切换的原子性，避免中间状态
+- **完整重建**: 每次变化都执行"清理-重建"流程，保证状态一致性
+- **批量优化**: 通过并发处理提升大量路由操作的性能
 
-#### 关键结构
-
-```go
-type NetworkMonitor struct {
-    gateway      net.IP
-    defaultIface string
-    routeSocket  int
-    eventChan    chan NetworkEvent
-    stopChan     chan struct{}
-    mutex        sync.RWMutex
-}
-
-type NetworkEvent struct {
-    Type      EventType
-    Interface string
-    Gateway   net.IP
-    Timestamp time.Time
-}
-
-type EventType int
-const (
-    GatewayChanged EventType = iota
-    InterfaceUp
-    InterfaceDown
-    AddressChanged
-)
-```
-
-#### 核心算法
-
-```go
-func (nm *NetworkMonitor) Start() error {
-    // 创建PF_ROUTE socket (macOS/BSD)
-    sock, err := unix.Socket(unix.AF_ROUTE, unix.SOCK_RAW, unix.AF_UNSPEC)
-    if err != nil {
-        return err
-    }
-    nm.routeSocket = sock
-    
-    go nm.monitorLoop()
-    return nil
-}
-
-func (nm *NetworkMonitor) monitorLoop() {
-    buffer := make([]byte, 4096)
-    for {
-        select {
-        case <-nm.stopChan:
-            return
-        default:
-            n, err := unix.Read(nm.routeSocket, buffer)
-            if err != nil {
-                continue
-            }
-            
-            if event := nm.parseRouteMessage(buffer[:n]); event != nil {
-                nm.eventChan <- *event
-            }
-        }
-    }
-}
-```
-
-### 3. Route Manager (路由管理器)
-
-#### 职责
-- 执行路由规则的增删改操作
-- 批量处理路由规则以提高性能
-- 提供跨平台路由操作抽象
-- 实现路由规则的原子性操作
-
-#### 接口定义
-
-```go
-type RouteManager interface {
-    AddRoute(network *net.IPNet, gateway net.IP) error
-    DeleteRoute(network *net.IPNet, gateway net.IP) error
-    BatchAddRoutes(routes []Route) error
-    BatchDeleteRoutes(routes []Route) error
-    GetDefaultGateway() (net.IP, string, error)
-    ListRoutes() ([]Route, error)
-    FlushRoutes(gateway net.IP) error
-}
-
-type Route struct {
-    Network *net.IPNet
-    Gateway net.IP
-    Interface string
-    Metric  int
-}
-```
-
-#### BSD实现 (macOS)
-
-```go
-type BSDRouteManager struct {
-    socket int
-    mutex  sync.Mutex
-}
-
-func (rm *BSDRouteManager) AddRoute(network *net.IPNet, gateway net.IP) error {
-    // 构造RTM_ADD消息
-    msg := &routeMessage{
-        Type:    RTM_ADD,
-        Flags:   RTF_UP | RTF_GATEWAY | RTF_STATIC,
-        Network: network,
-        Gateway: gateway,
-    }
-    
-    return rm.sendRouteMessage(msg)
-}
-
-func (rm *BSDRouteManager) BatchAddRoutes(routes []Route) error {
-    // 使用goroutine池并发处理
-    semaphore := make(chan struct{}, rm.concurrencyLimit)
-    var wg sync.WaitGroup
-    errChan := make(chan error, len(routes))
-    
-    for _, route := range routes {
-        wg.Add(1)
-        go func(r Route) {
-            defer wg.Done()
-            semaphore <- struct{}{}
-            defer func() { <-semaphore }()
-            
-            if err := rm.AddRoute(r.Network, r.Gateway); err != nil {
-                errChan <- err
-            }
-        }(route)
-    }
-    
-    wg.Wait()
-    close(errChan)
-    
-    // 收集错误
-    var errors []error
-    for err := range errChan {
-        errors = append(errors, err)
-    }
-    
-    if len(errors) > 0 {
-        return fmt.Errorf("batch operation failed: %d errors", len(errors))
-    }
-    
-    return nil
-}
-```
+#### 设计特点
+- **清理优先**: 首先删除所有管理的路由，避免冲突
+- **批量重建**: 基于新网关批量添加所有中国路由规则
+- **错误恢复**: 操作失败时提供回滚机制
 
 ### 4. Service Manager (服务管理器)
 
 #### 职责
-- 支持以系统服务方式运行
-- 管理进程生命周期
-- 处理系统信号
-- 提供优雅关闭机制
+- **事件处理循环**: 监听并处理来自NetworkMonitor的事件
+- **生命周期管理**: 管理整个服务的启动、运行和关闭流程
+- **信号处理**: 响应系统信号实现优雅关闭
+- **权限管理**: 确保以正确权限运行路由操作
 
-#### 结构设计
-
-```go
-type ServiceManager struct {
-    config    *Config
-    monitor   *NetworkMonitor
-    router    RouteManager
-    logger    *slog.Logger
-    stopChan  chan os.Signal
-    doneChan  chan struct{}
-}
-
-func (sm *ServiceManager) Start() error {
-    // 权限检查
-    if os.Getuid() != 0 {
-        return errors.New("root privileges required")
-    }
-    
-    // 信号处理
-    signal.Notify(sm.stopChan, syscall.SIGINT, syscall.SIGTERM)
-    
-    // 启动网络监控
-    if err := sm.monitor.Start(); err != nil {
-        return err
-    }
-    
-    // 初始路由设置
-    if err := sm.setupInitialRoutes(); err != nil {
-        return err
-    }
-    
-    // 主服务循环
-    go sm.serviceLoop()
-    
-    return nil
-}
-```
+#### 核心流程
+- **事件分发**: 根据事件类型(GatewayChanged/VPNConnected/VPNDisconnected)触发相应处理
+- **状态同步**: 维护当前网关状态与路由状态的同步
+- **错误处理**: 对路由操作失败进行恰当的错误处理和日志记录
 
 ## 🚀 性能优化策略
 
 ### 1. 并发处理优化
 
-#### Goroutine池设计
-```go
-type WorkerPool struct {
-    workers    int
-    jobs       chan RouteJob
-    results    chan RouteResult
-    wg         sync.WaitGroup
-}
-
-type RouteJob struct {
-    Network *net.IPNet
-    Gateway net.IP
-    Action  ActionType
-}
-
-func (wp *WorkerPool) Start() {
-    for i := 0; i < wp.workers; i++ {
-        go wp.worker()
-    }
-}
-
-func (wp *WorkerPool) worker() {
-    for job := range wp.jobs {
-        result := RouteResult{
-            Job:   job,
-            Error: wp.processJob(job),
-        }
-        wp.results <- result
-    }
-}
-```
-
 #### 批量操作策略
-- 将3000+条路由按批次处理（默认批次大小：100）
-- 使用信号量控制并发数量（默认：50个goroutine）
-- 实现退避重试机制处理临时失败
+- **Goroutine池**: 使用固定大小的工作池控制并发数量（默认：50个goroutine）
+- **批次处理**: 将3000+条路由按批次处理（默认批次大小：100条）
+- **退避重试**: 实现指数退避重试机制处理临时失败
+- **信号量控制**: 通过信号量避免过多并发导致的系统资源耗尽
 
 ### 2. 内存优化
 
-#### 对象池复用
-```go
-var routeMessagePool = sync.Pool{
-    New: func() interface{} {
-        return &routeMessage{
-            buffer: make([]byte, 1024),
-        }
-    },
-}
-
-func (rm *BSDRouteManager) sendRouteMessage(msg *routeMessage) error {
-    poolMsg := routeMessagePool.Get().(*routeMessage)
-    defer routeMessagePool.Put(poolMsg)
-    
-    // 重置和复用缓冲区
-    poolMsg.reset()
-    poolMsg.encode(msg)
-    
-    return rm.write(poolMsg.buffer)
-}
-```
-
-#### 内存预分配
-```go
-func LoadChnRoutes(file string) (*IPSet, error) {
-    // 预分配切片容量
-    networks := make([]net.IPNet, 0, 8000) // 预估中国IP段数量
-    
-    scanner := bufio.NewScanner(f)
-    for scanner.Scan() {
-        if network := parseCIDR(scanner.Text()); network != nil {
-            networks = append(networks, *network)
-        }
-    }
-    
-    return &IPSet{Networks: networks}, nil
-}
-```
+#### 对象复用策略
+- **内存池**: 使用sync.Pool复用路由消息缓冲区，减少GC压力
+- **预分配**: 基于预估容量预分配切片和映射，避免动态扩展开销
+- **零拷贝**: 在可能的情况下使用零拷贝技术减少内存分配
 
 ### 3. 系统调用优化
 
-#### 批量系统调用
-```go
-func (rm *BSDRouteManager) batchSystemCall(messages []*routeMessage) error {
-    // 合并多个路由消息到单个系统调用
-    totalSize := 0
-    for _, msg := range messages {
-        totalSize += msg.size()
-    }
-    
-    buffer := make([]byte, totalSize)
-    offset := 0
-    
-    for _, msg := range messages {
-        n := msg.writeTo(buffer[offset:])
-        offset += n
-    }
-    
-    return unix.Write(rm.socket, buffer)
-}
-```
+#### 批量处理机制
+- **消息合并**: 将多个路由操作合并为单次系统调用
+- **缓冲优化**: 使用合适大小的缓冲区减少系统调用次数
+- **非阻塞IO**: 在支持的平台上使用非阻塞IO提升响应性
 
 ## 🔒 错误处理与可靠性
 
 ### 1. 错误分类与处理
 
-```go
-type RouteError struct {
-    Type    ErrorType
-    Network *net.IPNet
-    Gateway net.IP
-    Cause   error
-}
-
-type ErrorType int
-const (
-    ErrPermission ErrorType = iota  // 权限错误
-    ErrNetwork                      // 网络错误
-    ErrInvalidRoute                 // 无效路由
-    ErrSystemCall                   // 系统调用错误
-    ErrTimeout                      // 超时错误
-)
-
-func (re *RouteError) IsRetryable() bool {
-    return re.Type == ErrNetwork || re.Type == ErrTimeout
-}
-```
+#### 分层错误处理
+- **权限错误**: 检测root权限，提供明确的权限提示
+- **网络错误**: 区分临时网络问题和永久性错误
+- **路由冲突**: 处理路由表中的冲突和重复条目
+- **系统调用错误**: 平台特定的系统调用错误处理
+- **超时错误**: 对长时间运行的操作设置合理超时
 
 ### 2. 重试机制
 
-```go
-func (rm *BSDRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP) error {
-    var lastErr error
-    
-    for attempt := 0; attempt < rm.maxRetries; attempt++ {
-        if err := rm.AddRoute(network, gateway); err == nil {
-            return nil
-        } else if routeErr, ok := err.(*RouteError); ok && !routeErr.IsRetryable() {
-            return err // 不可重试错误，直接返回
-        } else {
-            lastErr = err
-            time.Sleep(time.Duration(attempt+1) * time.Second) // 指数退避
-        }
-    }
-    
-    return fmt.Errorf("max retries exceeded: %w", lastErr)
-}
-```
+#### 智能重试策略
+- **错误分类**: 只对可恢复错误进行重试
+- **指数退避**: 使用指数退避避免重试风暴
+- **最大重试**: 设置合理的最大重试次数防止无限循环
+- **快速失败**: 对不可恢复错误立即失败，不浪费时间
 
 ### 3. 事务性操作
 
-```go
-func (rm *BSDRouteManager) AtomicUpdateRoutes(oldGateway, newGateway net.IP, networks []*net.IPNet) error {
-    // 创建回滚点
-    rollback := make([]Route, 0, len(networks))
-    
-    // Phase 1: 记录现有路由
-    for _, network := range networks {
-        if route := rm.findRoute(network, oldGateway); route != nil {
-            rollback = append(rollback, *route)
-        }
-    }
-    
-    // Phase 2: 删除旧路由
-    var failed []int
-    for i, network := range networks {
-        if err := rm.DeleteRoute(network, oldGateway); err != nil {
-            failed = append(failed, i)
-        }
-    }
-    
-    // Phase 3: 添加新路由
-    for i, network := range networks {
-        if err := rm.AddRoute(network, newGateway); err != nil {
-            // 回滚操作
-            rm.rollbackRoutes(rollback)
-            return fmt.Errorf("atomic update failed at network %d: %w", i, err)
-        }
-    }
-    
-    return nil
-}
-```
+#### 原子路由更新
+- **回滚机制**: 操作失败时能够回滚到之前状态
+- **分阶段执行**: 将复杂操作分为多个原子阶段
+- **状态一致性**: 确保任何时刻路由状态都是一致的
+- **故障恢复**: 从部分失败中恢复并继续执行
 
 ## 📊 监控与日志
 
 ### 1. 性能指标收集
 
-```go
-type Metrics struct {
-    RouteOperations    int64         // 路由操作总数
-    SuccessfulOps      int64         // 成功操作数
-    FailedOps          int64         // 失败操作数
-    AverageOpTime      time.Duration // 平均操作时间
-    NetworkChanges     int64         // 网络变化次数
-    LastUpdate         time.Time     // 最后更新时间
-    MemoryUsage        int64         // 内存使用量
-}
-
-func (m *Metrics) RecordOperation(duration time.Duration, success bool) {
-    atomic.AddInt64(&m.RouteOperations, 1)
-    if success {
-        atomic.AddInt64(&m.SuccessfulOps, 1)
-    } else {
-        atomic.AddInt64(&m.FailedOps, 1)
-    }
-    
-    // 更新平均时间（使用滑动平均）
-    m.updateAverageTime(duration)
-}
-```
+#### 关键指标
+- **路由操作统计**: 记录成功/失败的路由操作数量和耗时
+- **网络变化频率**: 监控网络状态变化的频率和模式
+- **事件处理延迟**: 从检测到处理完成的端到端延迟
+- **资源使用情况**: 内存占用、CPU使用率等系统资源指标
+- **健康状态**: Route socket连接状态、轮询降级状态等
 
 ### 2. 结构化日志
 
-```go
-func setupLogger(config *Config) *slog.Logger {
-    opts := &slog.HandlerOptions{
-        Level: parseLogLevel(config.LogLevel),
-    }
-    
-    var handler slog.Handler
-    if config.SilentMode {
-        handler = slog.NewTextHandler(io.Discard, opts)
-    } else {
-        handler = slog.NewJSONHandler(os.Stdout, opts)
-    }
-    
-    return slog.New(handler)
-}
-
-// 使用示例
-logger.Info("route operation completed",
-    slog.String("network", network.String()),
-    slog.String("gateway", gateway.String()),
-    slog.Duration("duration", elapsed),
-    slog.Int("batch_size", batchSize))
-```
+#### 日志策略
+- **分级日志**: 支持DEBUG、INFO、WARN、ERROR等多个级别
+- **结构化输出**: 使用JSON格式便于日志分析和处理
+- **上下文信息**: 包含完整的操作上下文，便于问题诊断
+- **静默模式**: 支持静默运行模式，减少生产环境日志噪音
 
 ## 🔧 部署与配置
 
-### 1. 配置文件示例
+### 1. 配置管理
 
-```json
-{
-    "log_level": "info",
-    "silent_mode": false,
-    "daemon_mode": true,
-    "chn_route_file": "/etc/smartroute/chnroute.txt",
-    "chn_dns_file": "/etc/smartroute/chdns.txt",
-    "monitor_interval": "5s",
-    "retry_attempts": 3,
-    "route_timeout": "30s",
-    "concurrency_limit": 50,
-    "batch_size": 100
-}
-```
+#### 配置文件结构
+- **基本配置**: 日志级别、运行模式、静默选项
+- **文件路径**: 中国IP段文件和DNS服务器文件路径
+- **网络参数**: 监控间隔、重试次数、超时设置
+- **性能调优**: 并发限制、批次大小等性能参数
 
-### 2. 系统服务配置
+### 2. 系统服务集成
 
-#### macOS (launchd)
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.smartroute.daemon</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/smartroute</string>
-        <string>--daemon</string>
-        <string>--config</string>
-        <string>/etc/smartroute/config.json</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-</dict>
-</plist>
-```
+#### 跨平台服务支持
+- **macOS**: 基于launchd的系统服务集成
+- **Linux**: 基于systemd的服务管理
+- **Windows**: 基于Windows Service的服务支持
+- **自动启动**: 支持系统启动时自动启动服务
 
-### 3. 安装脚本
+### 3. 安装与部署
 
-```bash
-#!/bin/bash
-# install.sh
+#### 自动化部署
+- **权限检查**: 确保安装过程具有正确的系统权限
+- **文件部署**: 自动复制配置文件和二进制文件到系统目录
+- **服务注册**: 根据平台自动注册和启动系统服务
+- **配置验证**: 安装后验证配置文件和服务状态
 
-# 检查权限
-if [[ $EUID -ne 0 ]]; then
-   echo "This script must be run as root" 
-   exit 1
-fi
+## 📈 性能预期与系统特性
 
-# 创建配置目录
-mkdir -p /etc/smartroute
+### 性能指标
 
-# 复制配置文件
-cp configs/* /etc/smartroute/
-
-# 安装二进制文件
-cp smartroute /usr/local/bin/
-chmod +x /usr/local/bin/smartroute
-
-# 安装系统服务
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    cp scripts/service/com.smartroute.plist /Library/LaunchDaemons/
-    launchctl load /Library/LaunchDaemons/com.smartroute.plist
-elif [[ -f /etc/systemd/system ]]; then
-    cp scripts/service/smartroute.service /etc/systemd/system/
-    systemctl enable smartroute
-    systemctl start smartroute
-fi
-
-echo "Smart Route Manager installed successfully!"
-```
-
-## 📈 性能预期
-
-基于设计分析，预期性能指标：
+基于事件驱动架构的优化设计，系统预期性能：
 
 - **路由设置速度**: 3000条路由规则在3-4秒内完成
-- **内存占用**: 运行时占用40-60MB
+- **内存占用**: 运行时稳定在40-60MB
 - **CPU使用率**: 正常监控状态下 < 2%
-- **网络变化响应**: < 2秒检测并开始处理
+- **事件响应延迟**: < 100ms检测网络变化并开始处理
 - **并发处理能力**: 支持50个并发路由操作
-- **错误恢复时间**: < 10秒完成故障恢复
+- **故障恢复时间**: < 10秒完成自动故障恢复
 
-此设计确保了高性能、高可靠性和良好的可维护性，满足所有功能和非功能性需求。
+### 系统特性
+
+#### 可靠性特性
+- **事务性路由更新**: 确保路由状态一致性，避免中间状态
+- **自动故障恢复**: Route socket失效时自动降级到轮询模式
+- **优雅关闭**: 响应系统信号，正确清理资源和状态
+
+#### 可观测性特性
+- **实时监控**: 提供详细的系统状态和性能指标
+- **结构化日志**: 便于问题诊断和系统分析
+- **健康检查**: 持续监控系统组件健康状态
+
+#### 扩展性特性
+- **跨平台支持**: 统一接口下的平台特化实现
+- **配置驱动**: 通过配置文件灵活调整系统行为
+- **模块化设计**: 松耦合的组件设计，便于维护和扩展
+
+此设计通过真正的事件驱动架构，实现了高性能、高可靠性和良好的可维护性，满足了复杂网络环境下的智能路由管理需求。

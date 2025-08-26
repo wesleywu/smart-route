@@ -65,11 +65,53 @@ func (rm *BSDRouteManager) BatchDeleteRoutes(routes []entities.Route, log *logge
 	return rm.batchOperation(routes, entities.ActionDelete, log)
 }
 
-// GetDefaultGateway gets the default gateway from the system
+// GetDefaultGateway gets the physical gateway from the system (for route management)
 func (rm *BSDRouteManager) GetDefaultGateway() (net.IP, string, error) {
 	// ALWAYS look for physical interface gateway, never rely on default route
 	// In VPN scenarios, default route will point to VPN, but we need the physical gateway
 	return rm.getPhysicalGateway()
+}
+
+// GetCurrentDefaultRoute gets the current default route (including VPN) from the system
+func (rm *BSDRouteManager) GetCurrentDefaultRoute() (net.IP, string, error) {
+	// Use 'route get default' to get the actual current default route
+	cmd := exec.Command("route", "-n", "get", "default")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get current default route: %w", err)
+	}
+
+	lines := strings.Split(string(output), "\n")
+	var gateway net.IP
+	var iface string
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "gateway:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				gateway = net.ParseIP(parts[1])
+			}
+		} else if strings.HasPrefix(line, "interface:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				iface = parts[1]
+			}
+		}
+	}
+
+	if iface == "" {
+		return nil, "", fmt.Errorf("failed to parse interface from current default route")
+	}
+
+	// For VPN interfaces, there might not be a gateway (direct connection)
+	// In this case, we can use a placeholder IP or the interface's IP
+	if gateway == nil {
+		// For VPN/TUN interfaces, use a placeholder gateway IP
+		gateway = net.ParseIP("0.0.0.0") // Indicates direct connection
+	}
+
+	return gateway, iface, nil
 }
 
 // ListRoutes lists all routes from the system

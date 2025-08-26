@@ -32,14 +32,22 @@ type NetworkMonitor struct {
 
 	// RouteManager for getting gateway information
 	routeManager entities.RouteManager
+
+	// VPN state tracking
+	lastVPNInterface string
+	lastVPNState     bool // true if VPN was connected in last check
 }
 
 // NetworkEvent is an event from the network monitor
 type NetworkEvent struct {
-	Type      EventType
-	Interface string
-	Gateway   net.IP
-	Timestamp time.Time
+	Type            EventType
+	Interface       string
+	PhysicalGateway net.IP // physical gateway
+	DefaultGateway  net.IP // default gateway
+	Timestamp       time.Time
+	// VPN related information
+	IsVPNConnected bool
+	VPNState       string // "Connected", "Disconnected", or ""
 }
 
 // EventType is the type of event
@@ -54,6 +62,10 @@ const (
 	InterfaceDown
 	// AddressChanged is an address change event
 	AddressChanged
+	// VPNConnected is a VPN connection event
+	VPNConnected
+	// VPNDisconnected is a VPN disconnection event
+	VPNDisconnected
 )
 
 // String returns the string representation of the event type
@@ -67,6 +79,10 @@ func (e EventType) String() string {
 		return "InterfaceDown"
 	case AddressChanged:
 		return "AddressChanged"
+	case VPNConnected:
+		return "VPNConnected"
+	case VPNDisconnected:
+		return "VPNDisconnected"
 	default:
 		return "Unknown"
 	}
@@ -78,9 +94,23 @@ func NewNetworkMonitor(pollInterval time.Duration, routeManager entities.RouteMa
 		return nil, fmt.Errorf("routeManager cannot be nil")
 	}
 
+	// For initialization, use physical gateway for route management
 	gateway, iface, err := routeManager.GetDefaultGateway()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get initial gateway: %w", err)
+	}
+
+	// Also check current default route to initialize VPN state
+	_, currentIface, _ := routeManager.GetCurrentDefaultRoute()
+	isVPNInitial := false
+	vpnIface := ""
+	if currentIface != "" {
+		// Temporary instance to use isVPNInterface method
+		temp := &NetworkMonitor{}
+		isVPNInitial = temp.isVPNInterface(currentIface)
+		if isVPNInitial {
+			vpnIface = currentIface
+		}
 	}
 
 	return &NetworkMonitor{
@@ -95,6 +125,9 @@ func NewNetworkMonitor(pollInterval time.Duration, routeManager entities.RouteMa
 		healthCheckInterval: 30 * time.Second, // 30 second health check interval
 		lastEventTime:       time.Now(),
 		routeManager:        routeManager,
+		// Initialize VPN state
+		lastVPNState:     isVPNInitial,
+		lastVPNInterface: vpnIface,
 	}, nil
 }
 
@@ -292,44 +325,115 @@ func (nm *NetworkMonitor) stopPolling() {
 	}
 }
 
-// checkGatewayChange checks for gateway changes
+// checkGatewayChange checks for both physical gateway changes and VPN state changes
 func (nm *NetworkMonitor) checkGatewayChange() {
-	currentGateway, currentIface, err := nm.routeManager.GetDefaultGateway()
-	if err != nil {
-		// Add debug info - this should rarely happen now
-		fmt.Printf("DEBUG: Failed to get gateway during check: %v\n", err)
+	// Check both physical gateway and current default route
+	physicalGW, physicalIface, err1 := nm.routeManager.GetDefaultGateway()
+	currentGW, currentIface, err2 := nm.routeManager.GetCurrentDefaultRoute()
+
+	if err1 != nil {
+		fmt.Printf("DEBUG: Failed to get physical gateway: %v\n", err1)
+	}
+	if err2 != nil {
+		fmt.Printf("DEBUG: Failed to get current default route: %v\n", err2)
+	}
+	if err1 != nil && err2 != nil {
 		return
 	}
 
 	nm.mutex.Lock()
-	oldGateway := nm.gateway
-	oldIface := nm.defaultIface
-	gatewayChanged := !nm.gateway.Equal(currentGateway)
-	interfaceChanged := nm.defaultIface != currentIface
+	oldPhysicalGW := nm.gateway
+	oldPhysicalIface := nm.defaultIface
 
-	// Add debug logging
-	fmt.Printf("DEBUG: Gateway check - Old: %s (%s), Current: %s (%s), Changed: %t\n",
-		oldGateway.String(), oldIface, currentGateway.String(), currentIface, gatewayChanged || interfaceChanged)
+	// Physical gateway change detection (for WiFi switching)
+	physicalGWChanged := false
+	physicalIfaceChanged := false
+	if err1 == nil {
+		physicalGWChanged = !nm.gateway.Equal(physicalGW)
+		physicalIfaceChanged = nm.defaultIface != physicalIface
+	}
 
-	if gatewayChanged || interfaceChanged {
-		nm.gateway = currentGateway
-		nm.defaultIface = currentIface
-		nm.mutex.Unlock()
+	// VPN state detection (from current default route)
+	currentIsVPN := false
+	vpnStateChanged := false
+	lastIsVPN := nm.lastVPNState
+	lastVPNIface := nm.lastVPNInterface
 
-		event := NetworkEvent{
-			Type:      GatewayChanged,
-			Interface: currentIface,
-			Gateway:   currentGateway,
-			Timestamp: time.Now(),
+	if err2 == nil {
+		currentIsVPN = nm.isVPNInterface(currentIface)
+		vpnStateChanged = currentIsVPN != lastIsVPN ||
+			(currentIsVPN && currentIface != lastVPNIface)
+	}
+
+	// Debug logging
+	if err1 == nil && err2 == nil {
+		fmt.Printf("DEBUG: Physical: %s (%s), Current: %s (%s), PhysicalChanged: %t, VPN: %t->%t\n",
+			physicalGW.String(), physicalIface, currentGW.String(), currentIface,
+			physicalGWChanged || physicalIfaceChanged, lastIsVPN, currentIsVPN)
+	}
+
+	// Update internal state
+	hasChanges := false
+	var event NetworkEvent
+
+	if physicalGWChanged || physicalIfaceChanged {
+		// Physical gateway change (WiFi switching)
+		nm.gateway = physicalGW
+		nm.defaultIface = physicalIface
+		hasChanges = true
+
+		event = NetworkEvent{
+			Type:            GatewayChanged,
+			Interface:       physicalIface,
+			PhysicalGateway: physicalGW,
+			DefaultGateway:  currentGW,
+			Timestamp:       time.Now(),
+			IsVPNConnected:  currentIsVPN,
 		}
 
+		fmt.Printf("Physical Gateway Changed: %s (%s) -> %s (%s)\n",
+			oldPhysicalGW.String(), oldPhysicalIface, physicalGW.String(), physicalIface)
+	}
+
+	if vpnStateChanged {
+		// VPN state change
+		nm.lastVPNState = currentIsVPN
+		nm.lastVPNInterface = currentIface
+		hasChanges = true
+
+		var eventType EventType
+		var vpnState string
+
+		if currentIsVPN {
+			eventType = VPNConnected
+			vpnState = "Connected"
+			fmt.Printf("VPN Connected: %s via %s\n", currentGW.String(), currentIface)
+		} else {
+			eventType = VPNDisconnected
+			vpnState = "Disconnected"
+			fmt.Printf("VPN Disconnected: %s via %s\n", currentGW.String(), currentIface)
+		}
+
+		// VPN events override physical gateway events
+		event = NetworkEvent{
+			Type:            eventType,
+			Interface:       currentIface,
+			PhysicalGateway: physicalGW,
+			DefaultGateway:  currentGW,
+			Timestamp:       time.Now(),
+			IsVPNConnected:  currentIsVPN,
+			VPNState:        vpnState,
+		}
+	}
+
+	nm.mutex.Unlock()
+
+	if hasChanges {
 		select {
 		case nm.eventChan <- event:
 		case <-nm.stopChan:
 			return
 		}
-	} else {
-		nm.mutex.Unlock()
 	}
 }
 
@@ -357,6 +461,29 @@ func (nm *NetworkMonitor) parseRouteMessage(data []byte) *NetworkEvent {
 	}
 
 	return nil // Don't return the unparsed event to avoid spam
+}
+
+// isVPNInterface checks if the given interface name is a VPN interface
+func (nm *NetworkMonitor) isVPNInterface(interfaceName string) bool {
+	// Common VPN interface patterns
+	if len(interfaceName) >= 4 {
+		prefix := interfaceName[:4]
+		switch prefix {
+		case "utun", "tun0", "tap0":
+			return true
+		}
+	}
+
+	// Check for other common VPN interface patterns
+	if len(interfaceName) >= 3 {
+		prefix := interfaceName[:3]
+		switch prefix {
+		case "tun", "tap", "ppp":
+			return true
+		}
+	}
+
+	return false
 }
 
 // GetMonitorStatus gets the monitor status

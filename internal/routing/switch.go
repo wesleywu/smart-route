@@ -40,7 +40,7 @@ func (rs *RouteSwitch) SetupRoutes(gateway net.IP) error {
 
 	// Phase 1: Clean up ALL managed routes (completely gateway-independent)
 	rs.logger.Info("phase 1: cleaning up all managed routes")
-	if err := rs.cleanRoutes(); err != nil {
+	if err := rs.CleanRoutes(); err != nil {
 		rs.logger.Error("failed to cleanup managed routes", "error", err)
 		return fmt.Errorf("failed to cleanup managed routes: %w", err)
 	}
@@ -95,8 +95,8 @@ func (rs *RouteSwitch) addRoutes(gateway net.IP) error {
 	return nil
 }
 
-// CleanupAllManagedRoutes removes all routes for networks defined in Chinese DNS and route files
-func (rs *RouteSwitch) cleanRoutes() error {
+// CleanRoutes removes all routes for networks defined in Chinese DNS and route files
+func (rs *RouteSwitch) CleanRoutes() error {
 	start := time.Now()
 
 	rs.logger.Info("cleaning up ALL managed routes from system (gateway-independent)")

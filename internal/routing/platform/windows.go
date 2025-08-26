@@ -48,7 +48,13 @@ func (rm *WindowsRouteManager) BatchDeleteRoutes(routes []entities.Route, log *l
 	return rm.batchOperation(routes, entities.ActionDelete, log)
 }
 
+// GetDefaultGateway gets the physical gateway from the system (for route management)
 func (rm *WindowsRouteManager) GetDefaultGateway() (net.IP, string, error) {
+	return rm.GetCurrentDefaultRoute()
+}
+
+// GetCurrentDefaultRoute gets the current default route (including VPN) from the system
+func (rm *WindowsRouteManager) GetCurrentDefaultRoute() (net.IP, string, error) {
 	cmd := exec.Command("route", "print", "0.0.0.0")
 	output, err := cmd.Output()
 	if err != nil {

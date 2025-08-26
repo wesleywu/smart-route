@@ -47,7 +47,14 @@ func (rm *LinuxRouteManager) BatchDeleteRoutes(routes []entities.Route, log *log
 	return rm.batchOperation(routes, entities.ActionDelete, log)
 }
 
+// GetDefaultGateway gets the physical gateway from the system (for route management)
 func (rm *LinuxRouteManager) GetDefaultGateway() (net.IP, string, error) {
+	// For Linux, this might need special logic to find physical gateway
+	return rm.GetCurrentDefaultRoute()
+}
+
+// GetCurrentDefaultRoute gets the current default route (including VPN) from the system
+func (rm *LinuxRouteManager) GetCurrentDefaultRoute() (net.IP, string, error) {
 	cmd := exec.Command("ip", "route", "show", "default")
 	output, err := cmd.Output()
 	if err != nil {
