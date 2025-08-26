@@ -44,12 +44,26 @@ func (rs *RouteSwitch) SetupRoutes(gateway net.IP) error {
 		return fmt.Errorf("failed to cleanup managed routes: %w", err)
 	}
 
+	time.Sleep(5*time.Second)
+	currentRoutes, err := rs.rm.ListRoutes()
+	if err != nil {
+		return fmt.Errorf("failed to list current routes: %w", err)
+	}
+	rs.logger.Info("current system routes after cleanup", "total_count", len(currentRoutes))
+
 	// Phase 2: Set up routes for current gateway
 	rs.logger.Info("phase 2: setting up routes for current gateway")
 	if err := rs.addRoutes(gateway); err != nil {
 		rs.logger.Error("failed to setup routes for current gateway", "gateway", gateway.String(), "error", err)
 		return fmt.Errorf("failed to setup routes for current gateway: %w", err)
 	}
+
+	time.Sleep(5*time.Second)
+	currentRoutes, err = rs.rm.ListRoutes()
+	if err != nil {
+		return fmt.Errorf("failed to list current routes: %w", err)
+	}
+	rs.logger.Info("current system routes after setup", "total_count", len(currentRoutes))
 
 	rs.logger.Info("route reset completed successfully",
 		"gateway", gateway.String())
