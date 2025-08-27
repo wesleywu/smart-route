@@ -35,11 +35,11 @@ func (rs *RouteSwitch) SetupRoutes(gateway net.IP) error {
 		return fmt.Errorf("gateway cannot be nil")
 	}
 
-	rs.logger.Info("performing complete route reset",
+	rs.logger.Debug("Route reset started",
 		"gateway", gateway.String())
 
 	// Phase 1: Clean up ALL managed routes (completely gateway-independent)
-	rs.logger.Info("phase 1: cleaning up all managed routes")
+	rs.logger.Debug("Phase 1: cleaning up all managed routes")
 	if err := rs.CleanRoutes(); err != nil {
 		rs.logger.Error("failed to cleanup managed routes", "error", err)
 		return fmt.Errorf("failed to cleanup managed routes: %w", err)
@@ -53,7 +53,7 @@ func (rs *RouteSwitch) SetupRoutes(gateway net.IP) error {
 	// rs.logger.Info("current system routes after cleanup", "total_count", len(currentRoutes))
 
 	// Phase 2: Set up routes for current gateway
-	rs.logger.Info("phase 2: setting up routes for current gateway")
+	rs.logger.Debug("Phase 2: setting up routes for current gateway")
 	if err := rs.addRoutes(gateway); err != nil {
 		rs.logger.Error("failed to setup routes for current gateway", "gateway", gateway.String(), "error", err)
 		return fmt.Errorf("failed to setup routes for current gateway: %w", err)
@@ -66,7 +66,7 @@ func (rs *RouteSwitch) SetupRoutes(gateway net.IP) error {
 	// }
 	// rs.logger.Info("current system routes after setup", "total_count", len(currentRoutes))
 
-	rs.logger.Info("route reset completed successfully",
+	rs.logger.Info("Smart routing configured",
 		"gateway", gateway.String())
 
 	return nil
@@ -81,7 +81,7 @@ func (rs *RouteSwitch) addRoutes(gateway net.IP) error {
 		return nil
 	}
 
-	rs.logger.Info("setting up routes", "gateway", gateway.String(), "count", len(routes))
+	rs.logger.Debug("Setting up routes", "gateway", gateway.String(), "count", len(routes))
 
 	err := rs.rm.BatchAddRoutes(routes, rs.logger)
 	duration := time.Since(start).Milliseconds()
@@ -91,7 +91,7 @@ func (rs *RouteSwitch) addRoutes(gateway net.IP) error {
 		return err
 	}
 
-	rs.logger.Info("route setup completed", "gateway", gateway.String(), "count", len(routes), "duration_ms", duration)
+	rs.logger.Debug("Routes added", "gateway", gateway.String(), "count", len(routes), "duration_ms", duration)
 	return nil
 }
 
@@ -99,13 +99,13 @@ func (rs *RouteSwitch) addRoutes(gateway net.IP) error {
 func (rs *RouteSwitch) CleanRoutes() error {
 	start := time.Now()
 
-	rs.logger.Info("cleaning up ALL managed routes from system (gateway-independent)")
+	rs.logger.Debug("Cleaning up managed routes")
 	routes := rs.buildRoutes(nil)
 	if len(routes) == 0 {
 		return nil
 	}
 
-	rs.logger.Info("starting complete route cleanup", "managed_networks_count", len(routes))
+	rs.logger.Debug("Starting complete route cleanup", "managed_networks_count", len(routes))
 
 	// Step 2: Get all current routes from system
 	currentRoutes, err := rs.rm.ListSystemRoutes()
@@ -113,16 +113,16 @@ func (rs *RouteSwitch) CleanRoutes() error {
 		return fmt.Errorf("failed to list current routes: %w", err)
 	}
 
-	rs.logger.Info("retrieved system routes", "total_count", len(currentRoutes))
+	rs.logger.Debug("Retrieved system routes", "total_count", len(currentRoutes))
 
 	// Step 3: Find all routes that match our managed networks
 	routesToDelete := rs.findMatchingRoutes(routes, currentRoutes)
 
-	rs.logger.Info("found routes to cleanup", "count", len(routesToDelete))
+	rs.logger.Debug("Found routes to cleanup", "count", len(routesToDelete))
 
 	// Step 4: Delete all matching routes
 	if len(routesToDelete) == 0 {
-		rs.logger.Info("no routes to cleanup")
+		rs.logger.Debug("No routes to clean up")
 		return nil
 	}
 
@@ -132,7 +132,7 @@ func (rs *RouteSwitch) CleanRoutes() error {
 		return fmt.Errorf("failed to delete routes: %w", err)
 	}
 
-	rs.logger.Info("successfully deleted all routes", "count", len(routesToDelete), "duration_ms", time.Since(start).Milliseconds())
+	rs.logger.Debug("Routes deleted", "count", len(routesToDelete), "duration_ms", time.Since(start).Milliseconds())
 	return nil
 }
 

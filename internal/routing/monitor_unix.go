@@ -44,10 +44,10 @@ func (nm *NetworkMonitor) isSocketError(err error) bool {
 // startPlatformMonitoring starts platform-specific monitoring for Unix systems
 func (nm *NetworkMonitor) startPlatformMonitoring() {
 	if err := nm.createRouteSocket(); err != nil {
-		fmt.Printf("Failed to create route socket, enabling polling as fallback: %v\n", err)
+		nm.logger.Warn("Failed to create route socket, enabling polling as fallback", "error", err)
 		nm.pollEnabled = true
 	} else {
-		fmt.Printf("Route socket monitoring started (real-time events)\n")
+		nm.logger.Debug("Route socket monitoring started (real-time events)")
 		go nm.monitorRouteSocket()
 	}
 }

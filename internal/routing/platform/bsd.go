@@ -81,9 +81,12 @@ func (rm *BSDRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 		return nil, "", fmt.Errorf("failed to get current default route: %w", err)
 	}
 
-	lines := strings.Split(string(output), "\n")
+	outputStr := string(output)
+	lines := strings.Split(outputStr, "\n")
 	var gateway net.IP
 	var iface string
+
+	// Remove debug output - not needed in production
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -100,8 +103,21 @@ func (rm *BSDRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 		}
 	}
 
+	// Enhanced error handling: if interface is missing, try to get it from physical gateway
 	if iface == "" {
-		return nil, "", fmt.Errorf("failed to parse interface from current default route")
+		// During network transitions, route output might be incomplete
+		// Try to fall back to physical gateway information
+		physGW, physIface, physErr := rm.getPhysicalGateway()
+		if physErr == nil && physIface != "" {
+			// Use physical interface as fallback, but keep the current gateway if found
+			if gateway == nil {
+				gateway = physGW
+			}
+			iface = physIface
+			// Using physical gateway as fallback during route transition
+		} else {
+			return nil, "", fmt.Errorf("failed to parse interface from current default route - route table may be in transition")
+		}
 	}
 
 	// For VPN interfaces, there might not be a gateway (direct connection)

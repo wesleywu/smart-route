@@ -51,7 +51,7 @@ func (l *Logger) WithFields(fields ...interface{}) *Logger {
 }
 
 func (l *Logger) RouteOperation(action, network, gateway string, duration int64, success bool) {
-	l.Info("route operation",
+	l.Info("Route operation completed",
 		slog.String("action", action),
 		slog.String("network", network),
 		slog.String("gateway", gateway),
@@ -60,7 +60,7 @@ func (l *Logger) RouteOperation(action, network, gateway string, duration int64,
 }
 
 func (l *Logger) NetworkChange(eventType, iface, oldGateway, newGateway string) {
-	l.Info("network change detected",
+	l.Info("Network change detected",
 		slog.String("event", eventType),
 		slog.String("interface", iface),
 		slog.String("old_gateway", oldGateway),
@@ -68,17 +68,17 @@ func (l *Logger) NetworkChange(eventType, iface, oldGateway, newGateway string) 
 }
 
 func (l *Logger) ServiceStart(version, pid string) {
-	l.Info("service starting",
+	l.Info("Service starting",
 		slog.String("version", version),
 		slog.String("pid", pid))
 }
 
 func (l *Logger) ServiceStop() {
-	l.Info("service stopping")
+	l.Info("Service stopping")
 }
 
 func (l *Logger) BatchOperation(action string, total, success, failed int, duration int64) {
-	l.Info("batch operation completed",
+	l.Info("Batch operation completed",
 		slog.String("action", action),
 		slog.Int("total", total),
 		slog.Int("success", success),
@@ -87,19 +87,19 @@ func (l *Logger) BatchOperation(action string, total, success, failed int, durat
 }
 
 func (l *Logger) ConfigLoaded(file string, routes, dns int) {
-	l.Info("configuration loaded",
+	l.Info("Configuration loaded",
 		slog.String("config_file", file),
 		slog.Int("chn_routes", routes),
 		slog.Int("chn_dns", dns))
 }
 
 func (l *Logger) MonitorStart(interval string) {
-	l.Info("network monitor started",
+	l.Info("Network monitor started",
 		slog.String("poll_interval", interval))
 }
 
 func (l *Logger) MonitorStop() {
-	l.Info("network monitor stopped")
+	l.Info("Network monitor stopped")
 }
 
 func (l *Logger) Performance(operation string, metrics map[string]interface{}) {

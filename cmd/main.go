@@ -102,7 +102,7 @@ func runOnce(_ *cobra.Command, _ []string) {
 	cfg := config.NewConfig()
 
 	log := logger.New(logLevel)
-	log.Info("Starting one-time route setup", "version", version)
+	log.Info("Route setup started", "version", version)
 
 	rm, err := routing.NewPlatformRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
 	if err != nil {
@@ -131,7 +131,7 @@ func runOnce(_ *cobra.Command, _ []string) {
 		os.Exit(1)
 	}
 
-	log.Info("Configuration loaded", "chn_routes", chnRoutes.Size(), "chn_dns", chnDNS.Size())
+	log.Info("Configuration loaded", "routes", chnRoutes.Size(), "dns_servers", chnDNS.Size())
 
 	// Create unified route switch handler
 	routeSwitch, err := routing.NewRouteSwitch(rm, chnRoutes, chnDNS, log)
@@ -142,8 +142,8 @@ func runOnce(_ *cobra.Command, _ []string) {
 
 	// One-time mode: Always perform complete route reset
 	// This ensures consistent behavior and clean state for every run
-	log.Info("One-time mode: performing complete route reset",
-		"current_gateway", gateway.String(), "interface", iface)
+	log.Info("Route reset started",
+		"gateway", gateway.String(), "interface", iface)
 
 	// Always use the unified logic: cleanup all managed routes, then setup for current gateway
 	if err := routeSwitch.SetupRoutes(gateway); err != nil {
@@ -151,7 +151,7 @@ func runOnce(_ *cobra.Command, _ []string) {
 		os.Exit(1)
 	}
 
-	log.Info("Route setup completed successfully")
+	log.Info("Route setup completed")
 }
 
 func runDaemon(cmd *cobra.Command, args []string) {

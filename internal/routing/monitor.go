@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wesleywu/smart-route/internal/logger"
 	"github.com/wesleywu/smart-route/internal/routing/entities"
 )
 
@@ -36,6 +37,9 @@ type NetworkMonitor struct {
 	
 	// Route manager for gateway queries
 	routeManager entities.RouteManager
+	
+	// Logger for debug and monitoring output
+	logger *logger.Logger
 
 	// VPN state tracking
 	lastVPNInterface string
@@ -97,7 +101,7 @@ func (e EventType) String() string {
 }
 
 // NewNetworkMonitor creates a new NetworkMonitor with event-driven architecture
-func NewNetworkMonitor(pollInterval time.Duration, routeManager entities.RouteManager) (*NetworkMonitor, error) {
+func NewNetworkMonitor(pollInterval time.Duration, routeManager entities.RouteManager, logger *logger.Logger) (*NetworkMonitor, error) {
 	if routeManager == nil {
 		return nil, fmt.Errorf("route manager cannot be nil")
 	}
@@ -139,6 +143,7 @@ func NewNetworkMonitor(pollInterval time.Duration, routeManager entities.RouteMa
 		
 		// Dependencies
 		routeManager: routeManager,
+		logger:       logger,
 		
 		// VPN state tracking
 		lastVPNConnected: initialVPNState,
@@ -289,7 +294,7 @@ func (nm *NetworkMonitor) healthCheck() {
 				nm.mutex.RUnlock()
 
 				if stillNoErrors {
-					fmt.Printf("Route socket appears stable, disabling polling\n")
+					nm.logger.Debug("Route socket appears stable, disabling polling")
 					nm.mutex.Lock()
 					nm.pollEnabled = false
 					nm.mutex.Unlock()
@@ -326,7 +331,7 @@ func (nm *NetworkMonitor) startPolling() {
 		}
 	}()
 
-	fmt.Printf("Polling started with interval %v\n", nm.pollInterval)
+	nm.logger.Debug("Polling started", "interval", nm.pollInterval)
 }
 
 // stopPolling stops polling
@@ -334,7 +339,7 @@ func (nm *NetworkMonitor) stopPolling() {
 	if nm.pollTicker != nil {
 		close(nm.pollStopChannel)
 		nm.pollTicker = nil
-		fmt.Printf("Polling stopped\n")
+		nm.logger.Debug("Polling stopped")
 	}
 }
 
@@ -345,11 +350,12 @@ func (nm *NetworkMonitor) checkNetworkChanges() {
 	currentGW, currentIface, err2 := nm.routeManager.GetSystemDefaultRoute()
 
 	if err1 != nil {
-		fmt.Printf("DEBUG: Failed to get physical gateway: %v\n", err1)
+		nm.logger.Debug("Failed to get physical gateway", "error", err1)
 	}
 	if err2 != nil {
-		fmt.Printf("DEBUG: Failed to get current default route: %v\n", err2)
+		nm.logger.Debug("Failed to get current default route", "error", err2)
 	}
+	// If both fail, this might be a very brief network transition - skip this check cycle
 	if err1 != nil && err2 != nil {
 		return
 	}
@@ -380,9 +386,13 @@ func (nm *NetworkMonitor) checkNetworkChanges() {
 
 	// Debug logging
 	if err1 == nil && err2 == nil {
-		fmt.Printf("DEBUG: Physical: %s (%s), Current: %s (%s), PhysicalChanged: %t, VPN: %t->%t\n",
-			physicalGW.String(), physicalIface, currentGW.String(), currentIface,
-			physicalGWChanged || physicalIfaceChanged, lastIsVPN, currentIsVPN)
+		nm.logger.Debug("Network state check",
+			"physical_gateway", physicalGW.String(),
+			"physical_interface", physicalIface,
+			"current_gateway", currentGW.String(),
+			"current_interface", currentIface,
+			"physical_changed", physicalGWChanged || physicalIfaceChanged,
+			"vpn_state_change", fmt.Sprintf("%t->%t", lastIsVPN, currentIsVPN))
 	}
 
 	// Update internal state
@@ -405,8 +415,11 @@ func (nm *NetworkMonitor) checkNetworkChanges() {
 			VPNConnected:      currentIsVPN,
 		}
 
-		fmt.Printf("Physical Gateway Changed: %s (%s) -> %s (%s)\n",
-			oldPhysicalGW.String(), oldPhysicalIface, physicalGW.String(), physicalIface)
+		nm.logger.Debug("Gateway changed",
+			"old_gateway", oldPhysicalGW.String(),
+			"old_physical_interface", oldPhysicalIface,
+			"new_gateway", physicalGW.String(),
+			"new_physical_interface", physicalIface)
 	}
 
 	if vpnStateChanged {
@@ -419,10 +432,14 @@ func (nm *NetworkMonitor) checkNetworkChanges() {
 
 		if currentIsVPN {
 			eventType = VPNConnected
-			fmt.Printf("VPN Connected: %s via %s\n", currentGW.String(), currentIface)
+			nm.logger.Debug("VPN connected",
+				"gateway", currentGW.String(),
+				"interface", currentIface)
 		} else {
 			eventType = VPNDisconnected
-			fmt.Printf("VPN Disconnected: %s via %s\n", currentGW.String(), currentIface)
+			nm.logger.Debug("VPN disconnected",
+				"gateway", currentGW.String(),
+				"interface", currentIface)
 		}
 
 		// VPN events override physical gateway events

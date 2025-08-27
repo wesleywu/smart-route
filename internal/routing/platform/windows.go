@@ -120,7 +120,7 @@ func (rm *WindowsRouteManager) CleanupRoutesForNetworks(networks []net.IPNet, lo
 
 	// Delete found routes
 	if len(routesToDelete) > 0 {
-		log.Info("cleaning up existing routes", "count", len(routesToDelete))
+		log.Info("Cleaning up existing routes", "count", len(routesToDelete))
 		if err := rm.BatchDeleteRoutes(routesToDelete, log); err != nil {
 			log.Warn("failed to cleanup some routes", "error", err)
 			// Don't return error - some routes might not exist anymore

@@ -28,6 +28,6 @@ func (nm *NetworkMonitor) isSocketError(err error) bool {
 
 // startPlatformMonitoring starts platform-specific monitoring for Windows
 func (nm *NetworkMonitor) startPlatformMonitoring() {
-	fmt.Printf("Platform %s not supported for route socket, enabling polling\n", "windows")
+	nm.logger.Debug("Platform not supported for route socket, enabling polling", "platform", "windows")
 	nm.pollEnabled = true
 }

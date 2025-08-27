@@ -59,7 +59,7 @@ func NewServiceManager(cfg *config.Config, log *logger.Logger, routeFile, dnsFil
 		return nil, fmt.Errorf("failed to create route manager: %w", err)
 	}
 
-	sm.monitor, err = routing.NewNetworkMonitor(cfg.MonitorInterval, sm.router)
+	sm.monitor, err = routing.NewNetworkMonitor(cfg.MonitorInterval, sm.router, sm.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network monitor: %w", err)
 	}
@@ -163,7 +163,7 @@ func (sm *ServiceManager) Wait() error {
 	case <-sm.ctx.Done():
 		return sm.ctx.Err()
 	case sig := <-sm.stopChan:
-		sm.logger.Info("received signal", "signal", sig.String())
+		sm.logger.Info("Signal received", "signal", sig.String())
 		return sm.Stop()
 	}
 }
@@ -189,34 +189,32 @@ func (sm *ServiceManager) handleNetworkEvent(event routing.NetworkEvent) {
 	physicalInterface := event.PhysicalInterface
 	vpnInterface := event.VPNInterface
 	physicalGateway := event.PhysicalGateway.String()
-	currentGateway := event.CurrentGateway.String()
+	_ = event.CurrentGateway // unused but keep for potential future use
 	vpnConnected := event.VPNConnected
 
 	// Enhanced logging with interface information
 	if vpnConnected && vpnInterface != "" {
-		sm.logger.Info("Network event with VPN info",
+		sm.logger.Debug("Network event with VPN info",
 			"type", eventType,
 			"physical_interface", physicalInterface,
 			"vpn_interface", vpnInterface,
 			"gateway", physicalGateway,
 			"is_vpn", vpnConnected)
-	} else {
-		sm.logger.NetworkChange(
-			eventType,
-			physicalInterface,
-			sm.currentGW.String(),
-			physicalGateway,
-		)
 	}
 
 	switch event.EventType {
 	case routing.PhysicalGatewayChanged:
-		sm.logger.Info("Physical gateway change detected",
-			"physical_interface", physicalInterface,
-			"vpn_interface", vpnInterface,
-			"physical_gateway", physicalGateway,
-			"current_gateway", currentGateway,
-			"is_vpn_connected", vpnConnected)
+		if vpnConnected {
+			sm.logger.Info("Gateway changed", 
+				"new_gateway", physicalGateway,
+				"vpn_interface", vpnInterface,
+				"vpn_status", "on")
+		} else {
+			sm.logger.Info("Gateway changed", 
+				"new_gateway", physicalGateway,
+				"physical_interface", physicalInterface,
+				"vpn_status", "off")
+		}
 		
 		// 只在VPN连接状态下处理WiFi切换，使用物理网关重新设置路由
 		if vpnConnected {
@@ -228,22 +226,12 @@ func (sm *ServiceManager) handleNetworkEvent(event routing.NetworkEvent) {
 		}
 		
 	case routing.VPNConnected:
-		sm.logger.Info("VPN connection detected",
-			"vpn_interface", vpnInterface,
-			"physical_interface", physicalInterface,
-			"physical_gateway", physicalGateway,
-			"vpn_gateway", currentGateway)
-		
 		// VPN连接时，使用物理网关设置中国路由
-		if err := sm.handleVPNConnection(event.PhysicalGateway); err != nil {
+		if err := sm.handleVPNConnection(event.PhysicalGateway, vpnInterface); err != nil {
 			sm.logger.Error("failed to handle VPN connection", "error", err)
 		}
 		
 	case routing.VPNDisconnected:
-		sm.logger.Info("VPN disconnection detected",
-			"physical_interface", physicalInterface,
-			"restored_gateway", physicalGateway)
-		
 		// VPN断开时，清理所有管理的路由（不需要网关参数）
 		if err := sm.handleVPNDisconnection(); err != nil {
 			sm.logger.Error("failed to handle VPN disconnection", "error", err)
@@ -260,10 +248,6 @@ func (sm *ServiceManager) handleNetworkEvent(event routing.NetworkEvent) {
 
 // handlePhysicalGatewayChange handles physical gateway changes (WiFi switching in VPN environment)
 func (sm *ServiceManager) handlePhysicalGatewayChange(newGW net.IP) error {
-	sm.mutex.Lock()
-	oldGW := sm.currentGW
-	oldIface := sm.currentIface
-	sm.mutex.Unlock()
 
 	// Use unified route switch logic
 	if err := sm.routeSwitch.SetupRoutes(newGW); err != nil {
@@ -279,20 +263,15 @@ func (sm *ServiceManager) handlePhysicalGatewayChange(newGW net.IP) error {
 	// Note: Removed route cache flush as it was clearing all routes including the ones we just added
 	// The route changes should take effect immediately without flushing the entire route cache
 
-	sm.logger.Info("gateway change completed successfully",
-		"old_gateway", sm.ipToString(oldGW),
-		"old_interface", oldIface,
-		"new_gateway", newGW.String())
-
 	return nil
 }
 
 // handleVPNConnection handles VPN connection events
-func (sm *ServiceManager) handleVPNConnection(physicalGW net.IP) error {
-	sm.mutex.Lock()
-	oldGW := sm.currentGW
-	oldIface := sm.currentIface
-	sm.mutex.Unlock()
+func (sm *ServiceManager) handleVPNConnection(physicalGW net.IP, vpnInterface string) error {
+
+	sm.logger.Info("VPN connected",
+		"vpn_interface", vpnInterface,
+		"physical_gateway", physicalGW.String())
 
 	// Use unified route switch logic with physical gateway
 	if err := sm.routeSwitch.SetupRoutes(physicalGW); err != nil {
@@ -307,11 +286,6 @@ func (sm *ServiceManager) handleVPNConnection(physicalGW net.IP) error {
 
 	// Note: Removed route cache flush as it was clearing all routes including the ones we just added
 	// The route changes should take effect immediately without flushing the entire route cache
-
-	sm.logger.Info("VPN connection detected and routes updated successfully",
-		"old_gateway", sm.ipToString(oldGW),
-		"old_interface", oldIface,
-		"physical_gateway", physicalGW.String())
 
 	return nil
 }
@@ -332,9 +306,9 @@ func (sm *ServiceManager) handleVPNDisconnection() error {
 	// Note: We don't update currentGW here since VPN disconnection doesn't change the physical gateway
 	// The physical gateway information remains valid for future VPN connections
 
-	sm.logger.Info("VPN disconnection detected and all managed routes cleaned",
-		"previous_gateway", sm.ipToString(oldGW),
-		"previous_interface", oldIface)
+	sm.logger.Info("VPN disconnected",
+		"physical_gateway", sm.ipToString(oldGW),
+		"physical_interface", oldIface)
 
 	return nil
 }
@@ -352,13 +326,13 @@ func (sm *ServiceManager) setupInitialRoutes() error {
 	isVPNConnected := sm.isVPNInterface(currentIface)
 	
 	if !isVPNConnected {
-		sm.logger.Info("VPN not connected during startup - skipping initial route setup",
+		sm.logger.Info("VPN not connected - skipping route setup",
 			"current_interface", currentIface,
 			"current_gateway", currentGW.String())
 		return nil
 	}
 
-	sm.logger.Info("VPN detected during startup - setting up initial routes",
+	sm.logger.Info("VPN detected - setting up routes",
 		"vpn_interface", currentIface,
 		"physical_gateway", sm.currentGW.String())
 
@@ -415,11 +389,11 @@ func (sm *ServiceManager) checkAndHandleGatewayChange() {
 	sm.mutex.RUnlock()
 
 	if gatewayChanged || interfaceChanged {
-		sm.logger.Info("detected gateway change during check",
+		sm.logger.Info("Gateway change detected",
 			"old_gateway", oldGW.String(),
-			"old_interface", oldIface,
+			"old_physical_interface", oldIface,
 			"new_gateway", currentGW.String(),
-			"new_interface", currentIface)
+			"new_physical_interface", currentIface)
 
 		if err := sm.handlePhysicalGatewayChange(currentGW); err != nil {
 			sm.logger.Error("failed to handle detected gateway change", "error", err)
