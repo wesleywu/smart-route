@@ -13,8 +13,8 @@ func TestNewDefaultConfig(t *testing.T) {
 		t.Errorf("Expected log level 'info', got '%s'", cfg.LogLevel)
 	}
 	
-	if cfg.MonitorInterval != 5*time.Second {
-		t.Errorf("Expected monitor interval 5s, got %v", cfg.MonitorInterval)
+	if cfg.MonitorInterval != 2*time.Second {
+		t.Errorf("Expected monitor interval 2s, got %v", cfg.MonitorInterval)
 	}
 	
 	if cfg.ConcurrencyLimit != 50 {
@@ -37,7 +37,7 @@ func TestConfigValidation(t *testing.T) {
 			name: "invalid log level",
 			cfg: &Config{
 				LogLevel:         "invalid",
-				MonitorInterval:  5 * time.Second,
+				MonitorInterval:  2 * time.Second,
 				RetryAttempts:    3,
 				RouteTimeout:     30 * time.Second,
 				ConcurrencyLimit: 50,

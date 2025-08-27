@@ -108,7 +108,7 @@ func (rs *RouteSwitch) CleanRoutes() error {
 	rs.logger.Info("starting complete route cleanup", "managed_networks_count", len(routes))
 
 	// Step 2: Get all current routes from system
-	currentRoutes, err := rs.rm.ListRoutes()
+	currentRoutes, err := rs.rm.ListSystemRoutes()
 	if err != nil {
 		return fmt.Errorf("failed to list current routes: %w", err)
 	}
@@ -144,8 +144,8 @@ func (rs *RouteSwitch) buildRoutes(gateway net.IP) []entities.Route {
 	networks := rs.chnRoutes.GetNetworks()
 	for _, network := range networks {
 		routes = append(routes, entities.Route{
-			Network: network,
-			Gateway: gateway,
+			Destination: network,
+			Gateway:     gateway,
 		})
 	}
 
@@ -160,8 +160,8 @@ func (rs *RouteSwitch) buildRoutes(gateway net.IP) []entities.Route {
 		}
 
 		routes = append(routes, entities.Route{
-			Network: ipNet,
-			Gateway: gateway,
+			Destination: ipNet,
+			Gateway:     gateway,
 		})
 	}
 
@@ -174,10 +174,10 @@ func (rs *RouteSwitch) findMatchingRoutes(managedNetworks []entities.Route, syst
 
 	for _, managedNetwork := range managedNetworks {
 		for _, systemRoute := range systemRoutes {
-			if rs.networksEqual(managedNetwork.Network, systemRoute.Network) {
+			if rs.networksEqual(managedNetwork.Destination, systemRoute.Destination) {
 				matchingRoutes = append(matchingRoutes, systemRoute)
 				rs.logger.Debug("found matching route",
-					"network", systemRoute.Network.String(),
+					"network", systemRoute.Destination.String(),
 					"gateway", systemRoute.Gateway.String(),
 					"interface", systemRoute.Interface)
 			}

@@ -33,7 +33,12 @@ func (nm *NetworkMonitor) readRouteSocket(buffer []byte) (int, error) {
 
 // isSocketError checks if an error is a socket error for Unix systems
 func (nm *NetworkMonitor) isSocketError(err error) bool {
-	return err != unix.EAGAIN && err != unix.EWOULDBLOCK
+	// Only count serious socket errors, ignore temporary errors
+	return err != unix.EAGAIN && 
+	       err != unix.EWOULDBLOCK && 
+	       err != unix.EINTR &&
+	       err != unix.ECONNRESET &&
+	       err != unix.EPIPE
 }
 
 // startPlatformMonitoring starts platform-specific monitoring for Unix systems

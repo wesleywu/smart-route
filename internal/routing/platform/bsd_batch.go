@@ -14,7 +14,7 @@ import (
 )
 
 // High-performance batch operation using native system calls
-func (rm *BSDRouteManager) batchOperationNative(routes []entities.Route, action entities.ActionType, log *logger.Logger) error {
+func (rm *BSDRouteManager) batchOperationNative(routes []entities.Route, action entities.RouteAction, log *logger.Logger) error {
 	if len(routes) == 0 {
 		return nil
 	}
@@ -30,7 +30,7 @@ func (rm *BSDRouteManager) batchOperationNative(routes []entities.Route, action 
 	return rm.concurrentBatchOperation(routes, action, start, log)
 }
 
-func (rm *BSDRouteManager) largeBatchOperation(routes []entities.Route, action entities.ActionType, log *logger.Logger) error {
+func (rm *BSDRouteManager) largeBatchOperation(routes []entities.Route, action entities.RouteAction, log *logger.Logger) error {
 	// For very large batches (3000+ routes), use a different strategy
 	// Process in chunks to avoid overwhelming the kernel
 	chunkSize := 500 // Process 500 routes at a time
@@ -53,33 +53,33 @@ func (rm *BSDRouteManager) largeBatchOperation(routes []entities.Route, action e
 	return nil
 }
 
-func (rm *BSDRouteManager) processChunkSequentially(routes []entities.Route, action entities.ActionType, log *logger.Logger) error {
+func (rm *BSDRouteManager) processChunkSequentially(routes []entities.Route, action entities.RouteAction, log *logger.Logger) error {
 	for _, route := range routes {
 		var err error
 		switch action {
-		case entities.ActionAdd:
-			err = rm.addRouteNative(&route.Network, route.Gateway, log)
-		case entities.ActionDelete:
-			err = rm.deleteRouteNative(&route.Network, route.Gateway, log)
+		case entities.RouteActionAdd:
+			err = rm.addRouteNative(&route.Destination, route.Gateway, log)
+		case entities.RouteActionDelete:
+			err = rm.deleteRouteNative(&route.Destination, route.Gateway, log)
 		}
 		
 		if err != nil {
 			// For batch operations, we might want to continue on certain errors
-			if routeErr, ok := err.(*entities.RouteError); ok {
-				if routeErr.Type == entities.ErrInvalidRoute {
+			if routeErr, ok := err.(*entities.RouteOperationError); ok {
+				if routeErr.ErrorType == entities.RouteErrInvalidRoute {
 					// Skip invalid routes but continue
 					continue
 				}
 			}
 			
 			// Check if this is a "file exists" error for route addition
-			if action == entities.ActionAdd && isRouteExistsError(err) {
+			if action == entities.RouteActionAdd && isRouteExistsError(err) {
 				// Route already exists, this is acceptable for batch add operations
 				continue
 			}
 			
 			// Check if this is a "no such file or directory" error for route deletion
-			if action == entities.ActionDelete && isRouteNotFoundError(err) {
+			if action == entities.RouteActionDelete && isRouteNotFoundError(err) {
 				// Route doesn't exist, this is acceptable for batch delete operations
 				continue
 			}
@@ -91,7 +91,7 @@ func (rm *BSDRouteManager) processChunkSequentially(routes []entities.Route, act
 	return nil
 }
 
-func (rm *BSDRouteManager) concurrentBatchOperation(routes []entities.Route, action entities.ActionType, start time.Time, log *logger.Logger) error {
+func (rm *BSDRouteManager) concurrentBatchOperation(routes []entities.Route, action entities.RouteAction, start time.Time, log *logger.Logger) error {
 	semaphore := make(chan struct{}, rm.concurrencyLimit)
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(routes))
@@ -105,40 +105,40 @@ func (rm *BSDRouteManager) concurrentBatchOperation(routes []entities.Route, act
 			
 			var err error
 			switch action {
-			case entities.ActionAdd:
-				err = rm.addRouteNative(&r.Network, r.Gateway, log)
-			case entities.ActionDelete:
-				err = rm.deleteRouteNative(&r.Network, r.Gateway, log)
+			case entities.RouteActionAdd:
+				err = rm.addRouteNative(&r.Destination, r.Gateway, log)
+			case entities.RouteActionDelete:
+				err = rm.deleteRouteNative(&r.Destination, r.Gateway, log)
 			}
 			
 			if err != nil {
 				// Apply the same error filtering logic as in sequential processing
-				if routeErr, ok := err.(*entities.RouteError); ok {
-					if routeErr.Type == entities.ErrInvalidRoute {
+				if routeErr, ok := err.(*entities.RouteOperationError); ok {
+					if routeErr.ErrorType == entities.RouteErrInvalidRoute {
 						// Skip invalid routes but continue
 						return
 					}
 				}
 				
 				// Check if this is a "file exists" error for route addition
-				if action == entities.ActionAdd && isRouteExistsError(err) {
+				if action == entities.RouteActionAdd && isRouteExistsError(err) {
 					// Route already exists, this is acceptable for batch add operations
 					return
 				}
 				
 				// Check if this is a "no such file or directory" error for route deletion
-				if action == entities.ActionDelete && isRouteNotFoundError(err) {
+				if action == entities.RouteActionDelete && isRouteNotFoundError(err) {
 					// Route doesn't exist, this is acceptable for batch delete operations
 					return
 				}
 				
 				// Special handling for "no such process" error in delete operations
-				if action == entities.ActionDelete && strings.Contains(err.Error(), "no such process") {
+				if action == entities.RouteActionDelete && strings.Contains(err.Error(), "no such process") {
 					log.Debug("Native batch delete failed with 'no such process', trying command line fallback", 
-						"network", r.Network.String(), "gateway", r.Gateway.String())
+						"network", r.Destination.String(), "gateway", r.Gateway.String())
 					
 					// Try command line fallback
-					fallbackErr := rm.deleteRouteCommand(&r.Network, r.Gateway, log)
+					fallbackErr := rm.deleteRouteCommand(&r.Destination, r.Gateway, log)
 					if fallbackErr == nil {
 						// Command line succeeded, don't report the native error
 						return
@@ -146,7 +146,7 @@ func (rm *BSDRouteManager) concurrentBatchOperation(routes []entities.Route, act
 					
 					// Both native and command line failed, report the original error
 					log.Debug("Command line fallback also failed", 
-						"network", r.Network.String(), "fallback_error", fallbackErr)
+						"network", r.Destination.String(), "fallback_error", fallbackErr)
 				}
 				
 				errChan <- err
@@ -213,8 +213,8 @@ var globalMessagePool = newRouteMessagePool()
 
 // Helper functions to check for specific error conditions
 func isRouteExistsError(err error) bool {
-	if routeErr, ok := err.(*entities.RouteError); ok {
-		if routeErr.Type == entities.ErrSystemCall && routeErr.Cause != nil {
+	if routeErr, ok := err.(*entities.RouteOperationError); ok {
+		if routeErr.ErrorType == entities.RouteErrSystemCall && routeErr.Cause != nil {
 			// Check for "file exists" error
 			causeStr := fmt.Sprintf("%v", routeErr.Cause)
 			return strings.Contains(causeStr, "file exists") ||
@@ -239,8 +239,8 @@ func isRouteNotFoundError(err error) bool {
 	// rather than the route simply not existing
 	
 	// Also check structured RouteError
-	if routeErr, ok := err.(*entities.RouteError); ok {
-		if routeErr.Type == entities.ErrSystemCall && routeErr.Cause != nil {
+	if routeErr, ok := err.(*entities.RouteOperationError); ok {
+		if routeErr.ErrorType == entities.RouteErrSystemCall && routeErr.Cause != nil {
 			causeStr := fmt.Sprintf("%v", routeErr.Cause)
 			return strings.Contains(causeStr, "no such file or directory") ||
 				   strings.Contains(causeStr, "ENOENT")

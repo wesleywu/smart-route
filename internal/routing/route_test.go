@@ -8,19 +8,19 @@ import (
 	"github.com/wesleywu/update-routes-native/internal/routing/entities"
 )
 
-func TestRouteError(t *testing.T) {
+func TestRouteOperationError(t *testing.T) {
 	_, network, _ := net.ParseCIDR("192.168.1.0/24")
 	gateway := net.ParseIP("192.168.1.1")
 	
-	err := &entities.RouteError{
-		Type:    entities.ErrPermission,
-		Network: *network,  // Dereference pointer to get value
-		Gateway: gateway,
-		Cause:   nil,
+	err := &entities.RouteOperationError{
+		ErrorType:   entities.RouteErrPermission,
+		Destination: *network,  // Dereference pointer to get value
+		Gateway:     gateway,
+		Cause:       nil,
 	}
 	
-	if err.Type != entities.ErrPermission {
-		t.Errorf("Expected error type %v, got %v", entities.ErrPermission, err.Type)
+	if err.ErrorType != entities.RouteErrPermission {
+		t.Errorf("Expected error type %v, got %v", entities.RouteErrPermission, err.ErrorType)
 	}
 	
 	if err.IsRetryable() {
@@ -28,11 +28,11 @@ func TestRouteError(t *testing.T) {
 	}
 	
 	// Test retryable error
-	networkErr := &entities.RouteError{
-		Type:    entities.ErrNetwork,
-		Network: *network,  // Dereference pointer to get value
-		Gateway: gateway,
-		Cause:   nil,
+	networkErr := &entities.RouteOperationError{
+		ErrorType:   entities.RouteErrNetwork,
+		Destination: *network,  // Dereference pointer to get value
+		Gateway:     gateway,
+		Cause:       nil,
 	}
 	
 	if !networkErr.IsRetryable() {
@@ -40,16 +40,17 @@ func TestRouteError(t *testing.T) {
 	}
 }
 
-func TestErrorTypeString(t *testing.T) {
+func TestRouteErrorTypeString(t *testing.T) {
 	tests := []struct {
-		errorType entities.ErrorType
+		errorType entities.RouteErrorType
 		expected  string
 	}{
-		{entities.ErrPermission, "Permission"},
-		{entities.ErrNetwork, "Network"},
-		{entities.ErrInvalidRoute, "InvalidRoute"},
-		{entities.ErrSystemCall, "SystemCall"},
-		{entities.ErrTimeout, "Timeout"},
+		{entities.RouteErrPermission, "Permission"},
+		{entities.RouteErrNetwork, "Network"},
+		{entities.RouteErrInvalidRoute, "InvalidRoute"},
+		{entities.RouteErrSystemCall, "SystemCall"},
+		{entities.RouteErrTimeout, "Timeout"},
+		{entities.RouteErrNotFound, "NotFound"},
 	}
 	
 	for _, tt := range tests {
@@ -61,34 +62,34 @@ func TestErrorTypeString(t *testing.T) {
 	}
 }
 
-func TestNewWorkerPool(t *testing.T) {
-	pool := NewWorkerPool(5)
+func TestNewRouteWorkerPool(t *testing.T) {
+	pool := NewRouteWorkerPool(5)
 	
-	if pool.workers != 5 {
-		t.Errorf("Expected 5 workers, got %d", pool.workers)
+	if pool.workerCount != 5 {
+		t.Errorf("Expected 5 workers, got %d", pool.workerCount)
 	}
 	
-	if pool.jobs == nil {
-		t.Error("Jobs channel should be initialized")
+	if pool.jobChannel == nil {
+		t.Error("Job channel should be initialized")
 	}
 	
-	if pool.results == nil {
-		t.Error("Results channel should be initialized")
+	if pool.resultChannel == nil {
+		t.Error("Result channel should be initialized")
 	}
 }
 
-func TestMetrics(t *testing.T) {
-	metrics := NewMetrics()
+func TestRouteManagerMetrics(t *testing.T) {
+	metrics := NewRouteManagerMetrics()
 	
 	// Test initial state
-	ops, success, failed, avgTime, changes := metrics.GetStats()
+	ops, success, failed, avgTime, changes := metrics.GetStatistics()
 	if ops != 0 || success != 0 || failed != 0 || changes != 0 {
 		t.Error("Initial metrics should be zero")
 	}
 	
 	// Record successful operation
-	metrics.RecordOperation(100*time.Millisecond, true)
-	ops, success, failed, avgTime, changes = metrics.GetStats()
+	metrics.RecordRouteOperation(100*time.Millisecond, true)
+	ops, success, failed, avgTime, changes = metrics.GetStatistics()
 	
 	if ops != 1 {
 		t.Errorf("Expected 1 operation, got %d", ops)
@@ -107,8 +108,8 @@ func TestMetrics(t *testing.T) {
 	}
 	
 	// Record failed operation
-	metrics.RecordOperation(200*time.Millisecond, false)
-	ops, success, failed, avgTime, changes = metrics.GetStats()
+	metrics.RecordRouteOperation(200*time.Millisecond, false)
+	ops, success, failed, avgTime, changes = metrics.GetStatistics()
 	
 	if ops != 2 {
 		t.Errorf("Expected 2 operations, got %d", ops)
@@ -120,7 +121,7 @@ func TestMetrics(t *testing.T) {
 	
 	// Record network change
 	metrics.RecordNetworkChange()
-	ops, success, failed, avgTime, changes = metrics.GetStats()
+	ops, success, failed, avgTime, changes = metrics.GetStatistics()
 	
 	if changes != 1 {
 		t.Errorf("Expected 1 network change, got %d", changes)
@@ -132,14 +133,14 @@ func TestRoute(t *testing.T) {
 	gateway := net.ParseIP("192.168.1.1")
 	
 	route := entities.Route{
-		Network:   *network,  // Dereference pointer to get value
-		Gateway:   gateway,
-		Interface: "eth0",
-		Metric:    1,
+		Destination: *network,  // Dereference pointer to get value
+		Gateway:     gateway,
+		Interface:   "eth0",
+		Metric:      1,
 	}
 	
-	if !route.Network.IP.Equal(net.ParseIP("192.168.1.0")) {
-		t.Error("Route network IP mismatch")
+	if !route.Destination.IP.Equal(net.ParseIP("192.168.1.0")) {
+		t.Error("Route destination IP mismatch")
 	}
 	
 	if !route.Gateway.Equal(gateway) {
@@ -155,21 +156,21 @@ func TestRoute(t *testing.T) {
 	}
 }
 
-func TestRouteJob(t *testing.T) {
+func TestRouteOperation(t *testing.T) {
 	_, network, _ := net.ParseCIDR("192.168.1.0/24")
 	gateway := net.ParseIP("192.168.1.1")
 	
-	job := RouteJob{
-		Network: network,
-		Gateway: gateway,
-		Action:  entities.ActionAdd,
+	operation := RouteOperation{
+		Destination: network,
+		Gateway:     gateway,
+		Action:      entities.RouteActionAdd,
 	}
 	
-	if job.Action != entities.ActionAdd {
-		t.Errorf("Expected ActionAdd, got %v", job.Action)
+	if operation.Action != entities.RouteActionAdd {
+		t.Errorf("Expected RouteActionAdd, got %v", operation.Action)
 	}
 	
-	if !job.Gateway.Equal(gateway) {
-		t.Error("Job gateway mismatch")
+	if !operation.Gateway.Equal(gateway) {
+		t.Error("Operation gateway mismatch")
 	}
 }

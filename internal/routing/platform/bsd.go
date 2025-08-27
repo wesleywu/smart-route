@@ -57,23 +57,23 @@ func (rm *BSDRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log *
 
 // BatchAddRoutes adds multiple routes to the system
 func (rm *BSDRouteManager) BatchAddRoutes(routes []entities.Route, log *logger.Logger) error {
-	return rm.batchOperation(routes, entities.ActionAdd, log)
+	return rm.batchOperation(routes, entities.RouteActionAdd, log)
 }
 
 // BatchDeleteRoutes deletes multiple routes from the system
 func (rm *BSDRouteManager) BatchDeleteRoutes(routes []entities.Route, log *logger.Logger) error {
-	return rm.batchOperation(routes, entities.ActionDelete, log)
+	return rm.batchOperation(routes, entities.RouteActionDelete, log)
 }
 
-// GetDefaultGateway gets the physical gateway from the system (for route management)
-func (rm *BSDRouteManager) GetDefaultGateway() (net.IP, string, error) {
+// GetPhysicalGateway gets the physical gateway from the system (for route management)  
+func (rm *BSDRouteManager) GetPhysicalGateway() (net.IP, string, error) {
 	// ALWAYS look for physical interface gateway, never rely on default route
 	// In VPN scenarios, default route will point to VPN, but we need the physical gateway
 	return rm.getPhysicalGateway()
 }
 
-// GetCurrentDefaultRoute gets the current default route (including VPN) from the system
-func (rm *BSDRouteManager) GetCurrentDefaultRoute() (net.IP, string, error) {
+// GetSystemDefaultRoute gets the current default route (including VPN) from the system
+func (rm *BSDRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 	// Use 'route get default' to get the actual current default route
 	cmd := exec.Command("route", "-n", "get", "default")
 	output, err := cmd.Output()
@@ -114,8 +114,8 @@ func (rm *BSDRouteManager) GetCurrentDefaultRoute() (net.IP, string, error) {
 	return gateway, iface, nil
 }
 
-// ListRoutes lists all routes from the system
-func (rm *BSDRouteManager) ListRoutes() ([]entities.Route, error) {
+// ListSystemRoutes lists all routes from the system
+func (rm *BSDRouteManager) ListSystemRoutes() ([]entities.Route, error) {
 	cmd := exec.Command("netstat", "-rn")
 	output, err := cmd.Output()
 	if err != nil {
@@ -142,7 +142,7 @@ func (rm *BSDRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP,
 			return nil
 		}
 		
-		if routeErr, ok := err.(*entities.RouteError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -167,7 +167,7 @@ func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.
 			return nil
 		}
 		
-		if routeErr, ok := err.(*entities.RouteError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -199,7 +199,7 @@ func (rm *BSDRouteManager) deleteRouteDirect(network *net.IPNet, gateway net.IP,
 	return err
 }
 
-func (rm *BSDRouteManager) batchOperation(routes []entities.Route, action entities.ActionType, log *logger.Logger) error {
+func (rm *BSDRouteManager) batchOperation(routes []entities.Route, action entities.RouteAction, log *logger.Logger) error {
 	// Use optimized native batch operation for better performance
 	return rm.batchOperationNative(routes, action, log)
 }
@@ -276,7 +276,7 @@ func parseNetstatOutput(output string) ([]entities.Route, error) {
 		}
 		
 		route := entities.Route{
-			Network:   *network,
+			Destination: *network,
 			Gateway:   gwIP,
 			Interface: iface,
 		}
@@ -412,11 +412,11 @@ func (rm *BSDRouteManager) deleteRouteCommand(network *net.IPNet, gateway net.IP
 		
 		log.Error("Command line route delete failed", "target", target, "gateway", gateway.String(), 
 			"error", err, "output", outputStr)
-		return &entities.RouteError{
-			Type:    entities.ErrSystemCall,
-			Network: *network,
-			Gateway: gateway,
-			Cause:   fmt.Errorf("command line delete failed: %w, output: %s", err, outputStr),
+		return &entities.RouteOperationError{
+			ErrorType:   entities.RouteErrSystemCall,
+			Destination: *network,
+			Gateway:     gateway,
+			Cause:       fmt.Errorf("command line delete failed: %w, output: %s", err, outputStr),
 		}
 	}
 	

@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -10,149 +11,170 @@ import (
 	"github.com/wesleywu/update-routes-native/internal/routing/platform"
 )
 
-// WorkerPool is a pool of workers that can be used to manage routes
-type WorkerPool struct {
-	workers int
-	jobs    chan RouteJob
-	results chan RouteResult
-	wg      sync.WaitGroup
+// RouteWorkerPool manages concurrent route operations using a worker pool pattern
+type RouteWorkerPool struct {
+	workerCount    int
+	jobChannel     chan RouteOperation
+	resultChannel  chan RouteOperationResult
+	workerGroup    sync.WaitGroup
 }
 
-// RouteJob represents a job to be performed on a route
-type RouteJob struct {
-	Network *net.IPNet
-	Gateway net.IP
-	Action  entities.ActionType
+// RouteOperation represents a route operation to be executed by workers
+type RouteOperation struct {
+	Destination *net.IPNet      // Target network
+	Gateway     net.IP          // Gateway for the route
+	Action      entities.RouteAction // Add or delete operation
 }
 
-// RouteResult represents the result of a route job
-type RouteResult struct {
-	Job   RouteJob
-	Error error
+// RouteOperationResult represents the outcome of a route operation
+type RouteOperationResult struct {
+	Operation RouteOperation // The executed operation
+	Error     error         // Error if operation failed, nil if successful
 }
 
 
-// NewWorkerPool creates a new worker pool
-func NewWorkerPool(workers int) *WorkerPool {
-	return &WorkerPool{
-		workers: workers,
-		jobs:    make(chan RouteJob, workers*2),
-		results: make(chan RouteResult, workers*2),
+// NewRouteWorkerPool creates a new concurrent route operation worker pool
+func NewRouteWorkerPool(workerCount int) *RouteWorkerPool {
+	bufferSize := workerCount * 2 // Buffer size for channels
+	return &RouteWorkerPool{
+		workerCount:   workerCount,
+		jobChannel:    make(chan RouteOperation, bufferSize),
+		resultChannel: make(chan RouteOperationResult, bufferSize),
 	}
 }
 
-// Start starts the worker pool
-func (wp *WorkerPool) Start(rm entities.RouteManager, log *logger.Logger) {
-	for i := 0; i < wp.workers; i++ {
-		wp.wg.Add(1)
-		go wp.worker(rm, log)
+// Start initializes and starts all workers in the pool
+func (rwp *RouteWorkerPool) Start(routeManager entities.RouteManager, logger *logger.Logger) {
+	for i := 0; i < rwp.workerCount; i++ {
+		rwp.workerGroup.Add(1)
+		go rwp.routeWorker(routeManager, logger)
 	}
 }
 
-// Stop stops the worker pool
-func (wp *WorkerPool) Stop() {
-	close(wp.jobs)
-	wp.wg.Wait()
-	close(wp.results)
+// Stop gracefully shuts down the worker pool
+func (rwp *RouteWorkerPool) Stop() {
+	close(rwp.jobChannel)        // Signal workers to stop accepting new jobs
+	rwp.workerGroup.Wait()       // Wait for all workers to complete
+	close(rwp.resultChannel)     // Close results channel after all workers finish
 }
 
-// AddJob adds a job to the worker pool
-func (wp *WorkerPool) AddJob(job RouteJob) {
-	wp.jobs <- job
+// SubmitOperation adds a route operation to the worker pool queue
+func (rwp *RouteWorkerPool) SubmitOperation(operation RouteOperation) {
+	rwp.jobChannel <- operation
 }
 
-// Results returns the results channel
-func (wp *WorkerPool) Results() <-chan RouteResult {
-	return wp.results
+// GetResultChannel returns the read-only channel for operation results
+func (rwp *RouteWorkerPool) GetResultChannel() <-chan RouteOperationResult {
+	return rwp.resultChannel
 }
 
-// worker is a worker function that performs the actual route management
-func (wp *WorkerPool) worker(rm entities.RouteManager, log *logger.Logger) {
-	defer wp.wg.Done()
+// routeWorker is the worker function that executes route operations
+func (rwp *RouteWorkerPool) routeWorker(routeManager entities.RouteManager, logger *logger.Logger) {
+	defer rwp.workerGroup.Done()
 	
-	for job := range wp.jobs {
+	for operation := range rwp.jobChannel {
 		var err error
 		
-		switch job.Action {
-		case entities.ActionAdd:
-			err = rm.AddRoute(job.Network, job.Gateway, log)
-		case entities.ActionDelete:
-			err = rm.DeleteRoute(job.Network, job.Gateway, log)
+		// Execute the route operation based on action type
+		switch operation.Action {
+		case entities.RouteActionAdd:
+			err = routeManager.AddRoute(operation.Destination, operation.Gateway, logger)
+		case entities.RouteActionDelete:
+			err = routeManager.DeleteRoute(operation.Destination, operation.Gateway, logger)
+		default:
+			err = fmt.Errorf("unknown route action: %v", operation.Action)
 		}
 		
-		result := RouteResult{
-			Job:   job,
-			Error: err,
+		// Send result back through results channel
+		result := RouteOperationResult{
+			Operation: operation,
+			Error:     err,
 		}
 		
-		wp.results <- result
+		rwp.resultChannel <- result
 	}
 }
 
-// NewRouteManager creates a new route manager
-func NewRouteManager(concurrencyLimit int, maxRetries int) (entities.RouteManager, error) {
+// NewPlatformRouteManager creates a platform-specific route manager instance
+func NewPlatformRouteManager(concurrencyLimit int, maxRetries int) (entities.RouteManager, error) {
 	return platform.NewPlatformRouteManager(concurrencyLimit, maxRetries)
 }
 
-// Metrics represents the metrics for the route manager
-type Metrics struct {
-	RouteOperations int64
-	SuccessfulOps   int64
-	FailedOps       int64
-	AverageOpTime   time.Duration
-	NetworkChanges  int64
-	LastUpdate      time.Time
-	MemoryUsage     int64
-	mutex           sync.RWMutex
+// RouteManagerMetrics collects performance and operational statistics
+type RouteManagerMetrics struct {
+	totalOperations     int64         // Total number of route operations
+	successfulOperations int64         // Number of successful operations
+	failedOperations     int64         // Number of failed operations
+	averageOperationTime time.Duration // Average time per operation
+	networkChangeCount   int64         // Number of network changes detected
+	lastUpdateTime       time.Time     // Timestamp of last metric update
+	memoryUsageBytes     int64         // Memory usage in bytes
+	metricsLock          sync.RWMutex  // Concurrent access protection
 }
 
-// NewMetrics creates a new metrics instance
-func NewMetrics() *Metrics {
-	return &Metrics{
-		LastUpdate: time.Now(),
+// NewRouteManagerMetrics creates a new metrics collection instance
+func NewRouteManagerMetrics() *RouteManagerMetrics {
+	return &RouteManagerMetrics{
+		lastUpdateTime: time.Now(),
 	}
 }
 
-// RecordOperation records the operation metrics
-func (m *Metrics) RecordOperation(duration time.Duration, success bool) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+// RecordRouteOperation records metrics for a completed route operation
+func (rmm *RouteManagerMetrics) RecordRouteOperation(operationDuration time.Duration, successful bool) {
+	rmm.metricsLock.Lock()
+	defer rmm.metricsLock.Unlock()
 	
-	m.RouteOperations++
-	if success {
-		m.SuccessfulOps++
+	rmm.totalOperations++
+	if successful {
+		rmm.successfulOperations++
 	} else {
-		m.FailedOps++
+		rmm.failedOperations++
 	}
 	
-	if m.AverageOpTime == 0 {
-		m.AverageOpTime = duration
+	// Update running average operation time
+	if rmm.averageOperationTime == 0 {
+		rmm.averageOperationTime = operationDuration
 	} else {
-		m.AverageOpTime = (m.AverageOpTime + duration) / 2
+		// Simple running average calculation
+		rmm.averageOperationTime = (rmm.averageOperationTime + operationDuration) / 2
 	}
 	
-	m.LastUpdate = time.Now()
+	rmm.lastUpdateTime = time.Now()
 }
 
-// RecordNetworkChange records the network change metrics
-func (m *Metrics) RecordNetworkChange() {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+// RecordNetworkChange increments the network change counter
+func (rmm *RouteManagerMetrics) RecordNetworkChange() {
+	rmm.metricsLock.Lock()
+	defer rmm.metricsLock.Unlock()
 	
-	m.NetworkChanges++
+	rmm.networkChangeCount++
+	rmm.lastUpdateTime = time.Now()
 }
 
-// GetStats returns the metrics statistics
-func (m *Metrics) GetStats() (int64, int64, int64, time.Duration, int64) {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+// GetStatistics returns a snapshot of current metrics
+func (rmm *RouteManagerMetrics) GetStatistics() (total, successful, failed int64, avgTime time.Duration, networkChanges int64) {
+	rmm.metricsLock.RLock()
+	defer rmm.metricsLock.RUnlock()
 	
-	return m.RouteOperations, m.SuccessfulOps, m.FailedOps, m.AverageOpTime, m.NetworkChanges
+	return rmm.totalOperations, rmm.successfulOperations, rmm.failedOperations, 
+		   rmm.averageOperationTime, rmm.networkChangeCount
 }
 
-// routesMatch checks if two networks are equivalent
-func routesMatch(net1, net2 net.IPNet) bool {
-	return net1.IP.Equal(net2.IP) && 
-		   len(net1.Mask) == len(net2.Mask) &&
-		   net1.Mask.String() == net2.Mask.String()
+// GetSuccessRate returns the success rate as a percentage (0-100)
+func (rmm *RouteManagerMetrics) GetSuccessRate() float64 {
+	rmm.metricsLock.RLock()
+	defer rmm.metricsLock.RUnlock()
+	
+	if rmm.totalOperations == 0 {
+		return 0.0
+	}
+	return float64(rmm.successfulOperations) / float64(rmm.totalOperations) * 100.0
+}
+
+// networksEqual checks if two IP networks are equivalent
+func networksEqual(network1, network2 net.IPNet) bool {
+	// Compare network addresses and subnet masks
+	return network1.IP.Equal(network2.IP) && 
+		   len(network1.Mask) == len(network2.Mask) &&
+		   network1.Mask.String() == network2.Mask.String()
 }

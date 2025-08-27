@@ -191,11 +191,11 @@ func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, g
 			operation = "delete"
 		}
 		log.Error("Failed to send route message", "error", err, "operation", operation, "network", network.String(), "gateway", gateway.String())
-		return &entities.RouteError{
-			Type:    entities.ErrSystemCall,
-			Network: *network,
-			Gateway: gateway,
-			Cause:   fmt.Errorf("failed to send route message: %w", err),
+		return &entities.RouteOperationError{
+			ErrorType:   entities.RouteErrSystemCall,
+			Destination: *network,
+			Gateway:     gateway,
+			Cause:       fmt.Errorf("failed to send route message: %w", err),
 		}
 	}
 	return nil

@@ -105,14 +105,14 @@ func runOnce(_ *cobra.Command, _ []string) {
 	log := logger.New(cfg)
 	log.Info("Starting one-time route setup", "version", version)
 
-	rm, err := routing.NewRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
+	rm, err := routing.NewPlatformRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
 	if err != nil {
 		log.Error("Failed to create route manager", "error", err)
 		os.Exit(1)
 	}
 	defer rm.Close()
 
-	gateway, iface, err := rm.GetDefaultGateway()
+	gateway, iface, err := rm.GetPhysicalGateway()
 	if err != nil {
 		log.Error("Failed to get default gateway", "error", err)
 		os.Exit(1)
@@ -247,10 +247,10 @@ func showVersion(cmd *cobra.Command, args []string) {
 	fmt.Printf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 
 	// Try to show current gateway information
-	rm, err := routing.NewRouteManager(1, 1) // minimal settings for quick check
+	rm, err := routing.NewPlatformRouteManager(1, 1) // minimal settings for quick check
 	if err == nil {
 		defer rm.Close()
-		gateway, iface, err := rm.GetDefaultGateway()
+		gateway, iface, err := rm.GetPhysicalGateway()
 		if err == nil {
 			fmt.Printf("Current Gateway: %s (%s)\n", gateway.String(), iface)
 		}
@@ -288,14 +288,14 @@ func testConfiguration(cmd *cobra.Command, args []string) {
 	log.Debug("Chinese DNS loading details", "file", cfg.ChnDNSFile, "servers", chnDNS.Size())
 	fmt.Printf("✅ Chinese DNS loaded: %d servers\n", chnDNS.Size())
 
-	rm, err := routing.NewRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
+	rm, err := routing.NewPlatformRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Failed to create route manager: %v\n", err)
 		os.Exit(1)
 	}
 	defer rm.Close()
 
-	gateway, iface, err := rm.GetDefaultGateway()
+	gateway, iface, err := rm.GetPhysicalGateway()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Failed to get default gateway: %v\n", err)
 		os.Exit(1)
