@@ -177,15 +177,7 @@ func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.
 	start := time.Now()
 	
 	for attempt := 0; attempt < rm.maxRetries; attempt++ {
-		// Try native system call first
 		err := rm.deleteRouteNative(network, gateway, log)
-		
-		// If native method fails with "no such process", try command line as fallback
-		if err != nil && strings.Contains(err.Error(), "no such process") {
-			log.Debug("Native delete failed with 'no such process', trying command line fallback", 
-				"network", network.String(), "gateway", gateway.String())
-			err = rm.deleteRouteCommand(network, gateway, log)
-		}
 		
 		if err == nil {
 			rm.metrics.RecordOperation(time.Since(start), true)
@@ -421,50 +413,6 @@ func parseDestination(dest string) (*net.IPNet, error) {
 	}
 	
 	return nil, fmt.Errorf("unsupported destination format: %s", dest)
-}
-
-// deleteRouteCommand deletes a route using the command line route tool as fallback
-func (rm *BSDRouteManager) deleteRouteCommand(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
-	// For single IP addresses (/32), use just the IP without /32
-	var target string
-	if network.Mask != nil {
-		ones, bits := network.Mask.Size()
-		if bits == 32 && ones == 32 {
-			// This is a /32 route, use just the IP
-			target = network.IP.String()
-		} else {
-			// This is a network route, use CIDR notation
-			target = network.String()
-		}
-	} else {
-		target = network.IP.String()
-	}
-	
-	log.Debug("Using command line route delete", "target", target, "gateway", gateway.String())
-	
-	cmd := exec.Command("route", "-n", "delete", target, gateway.String())
-	output, err := cmd.CombinedOutput()
-	
-	if err != nil {
-		// Check if this is an acceptable "not found" error
-		outputStr := string(output)
-		if strings.Contains(outputStr, "not in table") || strings.Contains(outputStr, "No such process") {
-			log.Debug("Route not found in table (acceptable)", "target", target, "output", outputStr)
-			return nil // Route already doesn't exist
-		}
-		
-		log.Error("Command line route delete failed", "target", target, "gateway", gateway.String(), 
-			"error", err, "output", outputStr)
-		return &entities.RouteOperationError{
-			ErrorType:   entities.RouteErrSystemCall,
-			Destination: *network,
-			Gateway:     gateway,
-			Cause:       fmt.Errorf("command line delete failed: %w, output: %s", err, outputStr),
-		}
-	}
-	
-	log.Debug("Command line route delete succeeded", "target", target, "gateway", gateway.String())
-	return nil
 }
 
 // getPhysicalGateway gets the physical gateway for macOS/BSD systems
