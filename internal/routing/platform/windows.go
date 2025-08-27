@@ -41,20 +41,22 @@ func (rm *WindowsRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, l
 }
 
 func (rm *WindowsRouteManager) BatchAddRoutes(routes []entities.Route, log *logger.Logger) error {
-	return rm.batchOperation(routes, entities.ActionAdd, log)
+	return rm.batchOperation(routes, entities.RouteActionAdd, log)
 }
 
 func (rm *WindowsRouteManager) BatchDeleteRoutes(routes []entities.Route, log *logger.Logger) error {
-	return rm.batchOperation(routes, entities.ActionDelete, log)
+	return rm.batchOperation(routes, entities.RouteActionDelete, log)
 }
 
-// GetDefaultGateway gets the physical gateway from the system (for route management)
-func (rm *WindowsRouteManager) GetDefaultGateway() (net.IP, string, error) {
-	return rm.GetCurrentDefaultRoute()
+// GetPhysicalGateway gets the underlying physical network gateway (for route management)
+func (rm *WindowsRouteManager) GetPhysicalGateway() (net.IP, string, error) {
+	// For Windows, we use the same implementation as system default route
+	// In a real scenario, this would need logic to detect VPN interfaces
+	return rm.GetSystemDefaultRoute()
 }
 
-// GetCurrentDefaultRoute gets the current default route (including VPN) from the system
-func (rm *WindowsRouteManager) GetCurrentDefaultRoute() (net.IP, string, error) {
+// GetSystemDefaultRoute gets the current default route (including VPN) from the system
+func (rm *WindowsRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 	cmd := exec.Command("route", "print", "0.0.0.0")
 	output, err := cmd.Output()
 	if err != nil {
@@ -64,7 +66,8 @@ func (rm *WindowsRouteManager) GetCurrentDefaultRoute() (net.IP, string, error) 
 	return rm.parseDefaultRouteWindows(string(output))
 }
 
-func (rm *WindowsRouteManager) ListRoutes() ([]entities.Route, error) {
+// ListSystemRoutes gets all routes from the system routing table
+func (rm *WindowsRouteManager) ListSystemRoutes() ([]entities.Route, error) {
 	cmd := exec.Command("route", "print")
 	output, err := cmd.Output()
 	if err != nil {
@@ -75,7 +78,7 @@ func (rm *WindowsRouteManager) ListRoutes() ([]entities.Route, error) {
 }
 
 func (rm *WindowsRouteManager) FlushRoutes(gateway net.IP) error {
-	routes, err := rm.ListRoutes()
+	routes, err := rm.ListSystemRoutes()
 	if err != nil {
 		return fmt.Errorf("failed to list routes: %w", err)
 	}
@@ -97,7 +100,7 @@ func (rm *WindowsRouteManager) CleanupRoutesForNetworks(networks []net.IPNet, lo
 	}
 
 	// Get all current routes
-	allRoutes, err := rm.ListRoutes()
+	allRoutes, err := rm.ListSystemRoutes()
 	if err != nil {
 		log.Debug("failed to list routes for cleanup", "error", err)
 		// Don't fail - we'll try to delete anyway
@@ -109,10 +112,10 @@ func (rm *WindowsRouteManager) CleanupRoutesForNetworks(networks []net.IPNet, lo
 	for _, network := range networks {
 		// Check all current routes to see if any match this network
 		for _, route := range allRoutes {
-			if routesMatch(network, route.Network) {
+			if routesMatch(network, route.Destination) {
 				routesToDelete = append(routesToDelete, route)
 				log.Debug("found existing route to cleanup", 
-					"network", route.Network.String(), 
+					"network", route.Destination.String(), 
 					"gateway", route.Gateway.String())
 			}
 		}
@@ -146,7 +149,7 @@ func (rm *WindowsRouteManager) addRouteWithRetry(network *net.IPNet, gateway net
 			return nil
 		}
 		
-		if routeErr, ok := err.(*entities.RouteError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -170,7 +173,7 @@ func (rm *WindowsRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway 
 			return nil
 		}
 		
-		if routeErr, ok := err.(*entities.RouteError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -193,14 +196,14 @@ func (rm *WindowsRouteManager) addRouteDirect(network *net.IPNet, gateway net.IP
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			switch exitErr.ExitCode() {
 			case 1:
-				return &entities.RouteError{Type: entities.ErrPermission, Network: *network, Gateway: gateway, Cause: err}
+				return &entities.RouteOperationError{ErrorType: entities.RouteErrPermission, Destination: *network, Gateway: gateway, Cause: err}
 			case 87:
-				return &entities.RouteError{Type: entities.ErrInvalidRoute, Network: *network, Gateway: gateway, Cause: err}
+				return &entities.RouteOperationError{ErrorType: entities.RouteErrInvalidRoute, Destination: *network, Gateway: gateway, Cause: err}
 			default:
-				return &entities.RouteError{Type: entities.ErrSystemCall, Network: *network, Gateway: gateway, Cause: err}
+				return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 			}
 		}
-		return &entities.RouteError{Type: entities.ErrSystemCall, Network: *network, Gateway: gateway, Cause: err}
+		return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 	}
 	
 	_ = ones
@@ -218,13 +221,13 @@ func (rm *WindowsRouteManager) deleteRouteDirect(network *net.IPNet, gateway net
 				return nil
 			}
 		}
-		return &entities.RouteError{Type: entities.ErrSystemCall, Network: *network, Gateway: gateway, Cause: err}
+		return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 	}
 	
 	return nil
 }
 
-func (rm *WindowsRouteManager) batchOperation(routes []entities.Route, action entities.ActionType, log *logger.Logger) error {
+func (rm *WindowsRouteManager) batchOperation(routes []entities.Route, action entities.RouteAction, log *logger.Logger) error {
 	semaphore := make(chan struct{}, rm.concurrencyLimit)
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(routes))
@@ -238,10 +241,10 @@ func (rm *WindowsRouteManager) batchOperation(routes []entities.Route, action en
 
 			var err error
 			switch action {
-			case entities.ActionAdd:
-				err = rm.AddRoute(&r.Network, r.Gateway, log)
-			case entities.ActionDelete:
-				err = rm.DeleteRoute(&r.Network, r.Gateway, log)
+			case entities.RouteActionAdd:
+				err = rm.AddRoute(&r.Destination, r.Gateway, log)
+			case entities.RouteActionDelete:
+				err = rm.DeleteRoute(&r.Destination, r.Gateway, log)
 			}
 
 			if err != nil {

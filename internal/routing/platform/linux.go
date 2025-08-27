@@ -40,21 +40,38 @@ func (rm *LinuxRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log
 }
 
 func (rm *LinuxRouteManager) BatchAddRoutes(routes []entities.Route, log *logger.Logger) error {
-	return rm.batchOperation(routes, entities.ActionAdd, log)
+	return rm.batchOperation(routes, entities.RouteActionAdd, log)
 }
 
 func (rm *LinuxRouteManager) BatchDeleteRoutes(routes []entities.Route, log *logger.Logger) error {
-	return rm.batchOperation(routes, entities.ActionDelete, log)
+	return rm.batchOperation(routes, entities.RouteActionDelete, log)
 }
 
-// GetDefaultGateway gets the physical gateway from the system (for route management)
-func (rm *LinuxRouteManager) GetDefaultGateway() (net.IP, string, error) {
-	// For Linux, this might need special logic to find physical gateway
-	return rm.GetCurrentDefaultRoute()
+// GetPhysicalGateway gets the underlying physical network gateway (for route management)  
+func (rm *LinuxRouteManager) GetPhysicalGateway() (net.IP, string, error) {
+	// For Linux, we need special logic to find the physical gateway
+	// This is more complex than the current default route since VPN might override it
+	
+	// For now, use a simplified implementation - in a real scenario,
+	// this would need to parse all routes and find the physical interface
+	cmd := exec.Command("ip", "route", "show", "default")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get default route: %w", err)
+	}
+
+	// Parse to find non-VPN interface
+	gateway, iface, err := rm.parseDefaultRouteLinux(string(output))
+	if err != nil {
+		return nil, "", err
+	}
+	
+	// TODO: Add logic to detect if this is a VPN interface and find the physical one
+	return gateway, iface, nil
 }
 
-// GetCurrentDefaultRoute gets the current default route (including VPN) from the system
-func (rm *LinuxRouteManager) GetCurrentDefaultRoute() (net.IP, string, error) {
+// GetSystemDefaultRoute gets the current default route (including VPN) from the system
+func (rm *LinuxRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 	cmd := exec.Command("ip", "route", "show", "default")
 	output, err := cmd.Output()
 	if err != nil {
@@ -64,7 +81,8 @@ func (rm *LinuxRouteManager) GetCurrentDefaultRoute() (net.IP, string, error) {
 	return rm.parseDefaultRouteLinux(string(output))
 }
 
-func (rm *LinuxRouteManager) ListRoutes() ([]entities.Route, error) {
+// ListSystemRoutes gets all routes from the system routing table
+func (rm *LinuxRouteManager) ListSystemRoutes() ([]entities.Route, error) {
 	cmd := exec.Command("ip", "route", "show")
 	output, err := cmd.Output()
 	if err != nil {
@@ -89,7 +107,7 @@ func (rm *LinuxRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.I
 			return nil
 		}
 		
-		if routeErr, ok := err.(*entities.RouteError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -113,7 +131,7 @@ func (rm *LinuxRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway ne
 			return nil
 		}
 		
-		if routeErr, ok := err.(*entities.RouteError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -135,14 +153,14 @@ func (rm *LinuxRouteManager) addRouteDirect(network *net.IPNet, gateway net.IP) 
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			switch exitErr.ExitCode() {
 			case 1:
-				return &entities.RouteError{Type: entities.ErrPermission, Network: *network, Gateway: gateway, Cause: err}
+				return &entities.RouteOperationError{ErrorType: entities.RouteErrPermission, Destination: *network, Gateway: gateway, Cause: err}
 			case 2:
-				return &entities.RouteError{Type: entities.ErrInvalidRoute, Network: *network, Gateway: gateway, Cause: err}
+				return &entities.RouteOperationError{ErrorType: entities.RouteErrInvalidRoute, Destination: *network, Gateway: gateway, Cause: err}
 			default:
-				return &entities.RouteError{Type: entities.ErrSystemCall, Network: *network, Gateway: gateway, Cause: err}
+				return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 			}
 		}
-		return &entities.RouteError{Type: entities.ErrSystemCall, Network: *network, Gateway: gateway, Cause: err}
+		return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 	}
 	
 	return nil
@@ -159,13 +177,13 @@ func (rm *LinuxRouteManager) deleteRouteDirect(network *net.IPNet, gateway net.I
 				return nil
 			}
 		}
-		return &entities.RouteError{Type: entities.ErrSystemCall, Network: *network, Gateway: gateway, Cause: err}
+		return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 	}
 	
 	return nil
 }
 
-func (rm *LinuxRouteManager) batchOperation(routes []entities.Route, action entities.ActionType, log *logger.Logger) error {
+func (rm *LinuxRouteManager) batchOperation(routes []entities.Route, action entities.RouteAction, log *logger.Logger) error {
 	semaphore := make(chan struct{}, rm.concurrencyLimit)
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(routes))
@@ -179,10 +197,10 @@ func (rm *LinuxRouteManager) batchOperation(routes []entities.Route, action enti
 
 			var err error
 			switch action {
-			case entities.ActionAdd:
-				err = rm.AddRoute(&r.Network, r.Gateway, log)
-			case entities.ActionDelete:
-				err = rm.DeleteRoute(&r.Network, r.Gateway, log)
+			case entities.RouteActionAdd:
+				err = rm.AddRoute(&r.Destination, r.Gateway, log)
+			case entities.RouteActionDelete:
+				err = rm.DeleteRoute(&r.Destination, r.Gateway, log)
 			}
 
 			if err != nil {
@@ -233,5 +251,6 @@ func (rm *LinuxRouteManager) parseDefaultRouteLinux(output string) (net.IP, stri
 }
 
 func parseIPRouteOutput(output string) ([]entities.Route, error) {
+	_ = output // TODO: implement parsing of 'ip route show' output
 	return nil, fmt.Errorf("not implemented")
 }
