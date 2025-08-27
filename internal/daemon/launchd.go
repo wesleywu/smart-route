@@ -22,8 +22,6 @@ const (
 	<array>
 		<string>%s</string>
 		<string>daemon</string>
-		<string>--config</string>
-		<string>%s</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -64,7 +62,7 @@ func (s *LaunchdService) Install() error {
 		return fmt.Errorf("root privileges required to install launchd service")
 	}
 
-	plistContent := fmt.Sprintf(LaunchdPlistTemplate, s.execPath, s.configPath)
+	plistContent := fmt.Sprintf(LaunchdPlistTemplate, s.execPath)
 
 	if err := os.WriteFile(LaunchdPlistPath, []byte(plistContent), 0644); err != nil {
 		return fmt.Errorf("failed to write plist file: %w", err)
@@ -96,21 +94,21 @@ func (s *LaunchdService) Uninstall() error {
 	return nil
 }
 
-// Start starts the launchd service
+// Start starts the launchd service by loading it
 func (s *LaunchdService) Start() error {
-	cmd := exec.Command("launchctl", "start", "com.smartroute.daemon")
+	cmd := exec.Command("launchctl", "load", LaunchdPlistPath)
 	return cmd.Run()
 }
 
-// Stop stops the launchd service
+// Stop stops the launchd service by unloading it
 func (s *LaunchdService) Stop() error {
-	cmd := exec.Command("launchctl", "stop", "com.smartroute.daemon")
+	cmd := exec.Command("launchctl", "unload", LaunchdPlistPath)
 	return cmd.Run()
 }
 
 // Status returns the status of the launchd service
 func (s *LaunchdService) Status() (string, error) {
-	cmd := exec.Command("launchctl", "list", "com.smartroute.daemon")
+	cmd := exec.Command("sudo", "launchctl", "list", "com.smartroute.daemon")
 	output, err := cmd.Output()
 	if err != nil {
 		return "stopped", nil

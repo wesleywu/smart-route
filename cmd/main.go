@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"github.com/spf13/cobra"
@@ -26,7 +28,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "smartroute",
 		Short: "Smart Route Manager for VPN split tunneling",
-		Long:  `A high-performance route management tool for Chinese IP addresses and DNS servers split tunneling.`,
+		Long:  `A high-performance route management tool for Chinese IP addresses and DNS servers smart routing.`,
 		Run:   runOnce,
 	}
 
@@ -185,19 +187,49 @@ func runDaemon(cmd *cobra.Command, args []string) {
 }
 
 func installService(cmd *cobra.Command, args []string) {
-	if os.Getuid() != 0 {
-		fmt.Fprintf(os.Stderr, "Error: Root privileges required for installation\n")
-		os.Exit(1)
-	}
-
-	execPath, err := os.Executable()
+	currentExecPath, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to get executable path: %v\n", err)
 		os.Exit(1)
 	}
 
-	// No longer using config files - pass empty string
-	service := daemon.NewPlatformService(execPath, "")
+	// Install to user's local bin directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get home directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	installDir := filepath.Join(homeDir, ".local", "bin")
+	targetPath := filepath.Join(installDir, "smartroute")
+
+	// Create install directory if it doesn't exist
+	if err := os.MkdirAll(installDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create install directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Copy binary to install directory (only if different)
+	if currentExecPath != targetPath {
+		fmt.Printf("Installing binary to %s\n", targetPath)
+		if err := copyFile(currentExecPath, targetPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to copy binary: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Set executable permissions
+		if err := os.Chmod(targetPath, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to set executable permissions: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Binary installed successfully\n")
+	} else {
+		fmt.Printf("Binary already in target location\n")
+	}
+
+	// Install system service (requires root)
+	fmt.Printf("Installing system service (requires sudo)...\n")
+	service := daemon.NewPlatformService(targetPath, "")
 	if err := service.Install(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to install service: %v\n", err)
 		os.Exit(1)
@@ -299,4 +331,22 @@ func testConfiguration(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Println("✅ All tests passed")
+}
+
+// copyFile copies a file from src to dst
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	return err
 }
