@@ -152,7 +152,7 @@ func (rm *BSDRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP,
 	start := time.Now()
 	
 	for attempt := 0; attempt < rm.maxRetries; attempt++ {
-		err := rm.addRouteDirect(network, gateway, log)
+		err := rm.addRouteNative(network, gateway, log)
 		if err == nil {
 			rm.metrics.RecordOperation(time.Since(start), true)
 			return nil
@@ -177,7 +177,16 @@ func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.
 	start := time.Now()
 	
 	for attempt := 0; attempt < rm.maxRetries; attempt++ {
-		err := rm.deleteRouteDirect(network, gateway, log)
+		// Try native system call first
+		err := rm.deleteRouteNative(network, gateway, log)
+		
+		// If native method fails with "no such process", try command line as fallback
+		if err != nil && strings.Contains(err.Error(), "no such process") {
+			log.Debug("Native delete failed with 'no such process', trying command line fallback", 
+				"network", network.String(), "gateway", gateway.String())
+			err = rm.deleteRouteCommand(network, gateway, log)
+		}
+		
 		if err == nil {
 			rm.metrics.RecordOperation(time.Since(start), true)
 			return nil
@@ -196,28 +205,46 @@ func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }
 
-func (rm *BSDRouteManager) addRouteDirect(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
-	// Use native system call for better performance
-	return rm.addRouteNative(network, gateway, log)
-}
-
-func (rm *BSDRouteManager) deleteRouteDirect(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
-	// Try native system call first
-	err := rm.deleteRouteNative(network, gateway, log)
-	
-	// If native method fails with "no such process", try command line as fallback
-	if err != nil && strings.Contains(err.Error(), "no such process") {
-		log.Debug("Native delete failed with 'no such process', trying command line fallback", 
-			"network", network.String(), "gateway", gateway.String())
-		return rm.deleteRouteCommand(network, gateway, log)
-	}
-	
-	return err
-}
 
 func (rm *BSDRouteManager) batchOperation(routes []entities.Route, action entities.RouteAction, log *logger.Logger) error {
-	// Use optimized native batch operation for better performance
-	return rm.batchOperationNative(routes, action, log)
+	semaphore := make(chan struct{}, rm.concurrencyLimit)
+	var wg sync.WaitGroup
+	errChan := make(chan error, len(routes))
+
+	for _, route := range routes {
+		wg.Add(1)
+		go func(r entities.Route) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			var err error
+			switch action {
+			case entities.RouteActionAdd:
+				err = rm.AddRoute(&r.Destination, r.Gateway, log)
+			case entities.RouteActionDelete:
+				err = rm.DeleteRoute(&r.Destination, r.Gateway, log)
+			}
+
+			if err != nil {
+				errChan <- err
+			}
+		}(route)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	var errors []error
+	for err := range errChan {
+		errors = append(errors, err)
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("batch operation failed: %d errors", len(errors))
+	}
+
+	return nil
 }
 
 
