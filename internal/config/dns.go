@@ -20,20 +20,12 @@ func NewDNSServers() *DNSServers {
 	}
 }
 
-func LoadChnDNS(file string) (*DNSServers, error) {
-	f, err := os.Open(file)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open file %s: %w", file, err)
-	}
-	defer f.Close()
-
-	ips := make([]net.IP, 0, 100)
-	scanner := bufio.NewScanner(f)
-	lineNum := 0
-
-	for scanner.Scan() {
-		lineNum++
-		line := strings.TrimSpace(scanner.Text())
+// parseDNSLines parses DNS server lines from a slice of strings
+func parseDNSLines(lines []string) (*DNSServers, error) {
+	ips := make([]net.IP, 0, len(lines))
+	
+	for lineNum, line := range lines {
+		line = strings.TrimSpace(line)
 
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -41,17 +33,34 @@ func LoadChnDNS(file string) (*DNSServers, error) {
 
 		ip := net.ParseIP(line)
 		if ip == nil {
-			return nil, fmt.Errorf("invalid IP address at line %d: %s", lineNum, line)
+			return nil, fmt.Errorf("invalid IP address at line %d: %s", lineNum+1, line)
 		}
 
 		ips = append(ips, ip)
+	}
+
+	return &DNSServers{IPs: ips}, nil
+}
+
+func LoadChnDNS(file string) (*DNSServers, error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file %s: %w", file, err)
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("failed to read file %s: %w", file, err)
 	}
 
-	return &DNSServers{IPs: ips}, nil
+	return parseDNSLines(lines)
 }
 
 func (dns *DNSServers) Contains(ip net.IP) bool {

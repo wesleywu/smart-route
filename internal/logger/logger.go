@@ -1,30 +1,22 @@
 package logger
 
 import (
-	"io"
 	"log/slog"
 	"os"
 	"strings"
-
-	"github.com/wesleywu/smart-route/internal/config"
 )
 
 type Logger struct {
 	*slog.Logger
 }
 
-func New(cfg *config.Config) *Logger {
+func New(logLevel string) *Logger {
 	opts := &slog.HandlerOptions{
-		Level: parseLogLevel(cfg.LogLevel),
-		AddSource: cfg.LogLevel == "debug",
+		Level: parseLogLevel(logLevel),
+		AddSource: logLevel == "debug",
 	}
 
-	var handler slog.Handler
-	if cfg.SilentMode {
-		handler = slog.NewTextHandler(io.Discard, opts)
-	} else {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	}
+	handler := slog.NewJSONHandler(os.Stdout, opts)
 
 	return &Logger{
 		Logger: slog.New(handler),

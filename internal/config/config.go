@@ -6,15 +6,6 @@ import (
 )
 
 type Config struct {
-	// 基本配置 - 由命令行参数设置
-	LogLevel   string
-	SilentMode bool
-	DaemonMode bool
-
-	// 文件路径 - 由命令行参数设置
-	ChnRouteFile string
-	ChnDNSFile   string
-
 	// 网络配置 - 硬编码默认值
 	MonitorInterval time.Duration
 	RetryAttempts   int
@@ -25,15 +16,9 @@ type Config struct {
 	BatchSize        int
 }
 
-// NewConfig creates a new config with command line parameters
-func NewConfig(logLevel string, silentMode, daemonMode bool, chnRouteFile, chnDNSFile string) *Config {
+// NewConfig creates a new config with default values
+func NewConfig() *Config {
 	return &Config{
-		LogLevel:         logLevel,
-		SilentMode:       silentMode,
-		DaemonMode:       daemonMode,
-		ChnRouteFile:     chnRouteFile,
-		ChnDNSFile:       chnDNSFile,
-		
 		// 硬编码的合理默认值
 		MonitorInterval:  2 * time.Second,
 		RetryAttempts:    3,
@@ -47,7 +32,7 @@ func NewConfig(logLevel string, silentMode, daemonMode bool, chnRouteFile, chnDN
 // Kept for backward compatibility, always returns default config
 func LoadConfig(path string) (*Config, error) {
 	// Return hardcoded config with default file paths
-	return NewConfig("info", false, false, "configs/chnroute.txt", "configs/chndns.txt"), nil
+	return NewConfig(), nil
 }
 
 func (c *Config) Validate() error {
@@ -69,17 +54,6 @@ func (c *Config) Validate() error {
 
 	if c.BatchSize < 1 {
 		return fmt.Errorf("batch_size must be at least 1")
-	}
-
-	validLogLevels := map[string]bool{
-		"debug": true,
-		"info":  true,
-		"warn":  true,
-		"error": true,
-	}
-
-	if !validLogLevels[c.LogLevel] {
-		return fmt.Errorf("invalid log_level: %s", c.LogLevel)
 	}
 
 	return nil

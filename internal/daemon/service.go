@@ -25,6 +25,8 @@ type ServiceManager struct {
 	routeSwitch  *routing.RouteSwitch
 	chnRoutes    *config.IPSet
 	chnDNS       *config.DNSServers
+	routeFile    string
+	dnsFile      string
 	stopChan     chan os.Signal
 	doneChan     chan struct{}
 	ctx          context.Context
@@ -37,16 +39,18 @@ type ServiceManager struct {
 }
 
 // NewServiceManager creates a new ServiceManager
-func NewServiceManager(cfg *config.Config, log *logger.Logger) (*ServiceManager, error) {
+func NewServiceManager(cfg *config.Config, log *logger.Logger, routeFile, dnsFile string) (*ServiceManager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sm := &ServiceManager{
-		config:   cfg,
-		logger:   log.WithComponent("service"),
-		stopChan: make(chan os.Signal, 1),
-		doneChan: make(chan struct{}),
-		ctx:      ctx,
-		cancel:   cancel,
+		config:    cfg,
+		logger:    log.WithComponent("service"),
+		routeFile: routeFile,
+		dnsFile:   dnsFile,
+		stopChan:  make(chan os.Signal, 1),
+		doneChan:  make(chan struct{}),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 
 	var err error
@@ -60,12 +64,12 @@ func NewServiceManager(cfg *config.Config, log *logger.Logger) (*ServiceManager,
 		return nil, fmt.Errorf("failed to create network monitor: %w", err)
 	}
 
-	sm.chnRoutes, err = config.LoadChnRoutes(cfg.ChnRouteFile)
+	sm.chnRoutes, err = config.LoadChnRoutesWithFallback(routeFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load Chinese routes: %w", err)
 	}
 
-	sm.chnDNS, err = config.LoadChnDNS(cfg.ChnDNSFile)
+	sm.chnDNS, err = config.LoadChnDNSWithFallback(dnsFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load Chinese DNS: %w", err)
 	}
@@ -95,7 +99,7 @@ func (sm *ServiceManager) Start() error {
 	signal.Notify(sm.stopChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	sm.logger.ServiceStart("1.0.0", fmt.Sprintf("%d", os.Getpid()))
-	sm.logger.ConfigLoaded(sm.config.ChnRouteFile, sm.chnRoutes.Size(), sm.chnDNS.Size())
+	sm.logger.ConfigLoaded(sm.routeFile, sm.chnRoutes.Size(), sm.chnDNS.Size())
 
 	gw, iface, err := sm.router.GetPhysicalGateway()
 	if err != nil {

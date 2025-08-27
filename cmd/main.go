@@ -15,11 +15,11 @@ import (
 var (
 	version = "1.0.0"
 
-	// Removed configFile since we're eliminating config.json
-	silentMode   bool
-	verboseMode  bool
-	chnRouteFile string
-	chnDNSFile   string
+	// Command line flags
+	silentMode bool
+	verboseMode bool  
+	routeFile  string
+	dnsFile    string
 )
 
 func main() {
@@ -74,8 +74,8 @@ func main() {
 
 	rootCmd.PersistentFlags().BoolVarP(&silentMode, "silent", "s", false, "Silent mode (no output)")
 	rootCmd.PersistentFlags().BoolVarP(&verboseMode, "verbose", "v", false, "Verbose mode (debug level logging)")
-	rootCmd.PersistentFlags().StringVar(&chnRouteFile, "chn-routes", "configs/chnroute.txt", "Chinese routes file path")
-	rootCmd.PersistentFlags().StringVar(&chnDNSFile, "chn-dns", "configs/chndns.txt", "Chinese DNS file path")
+	rootCmd.PersistentFlags().StringVar(&routeFile, "route-file", "", "External routes file path (defaults to embedded data)")
+	rootCmd.PersistentFlags().StringVar(&dnsFile, "dns-file", "", "External DNS file path (defaults to embedded data)")
 
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(installCmd)
@@ -96,12 +96,12 @@ func runOnce(_ *cobra.Command, _ []string) {
 	if verboseMode {
 		logLevel = "debug"
 	} else if silentMode {
-		logLevel = "warn"
+		logLevel = "error"
 	}
 
-	cfg := config.NewConfig(logLevel, silentMode, false, chnRouteFile, chnDNSFile)
+	cfg := config.NewConfig()
 
-	log := logger.New(cfg)
+	log := logger.New(logLevel)
 	log.Info("Starting one-time route setup", "version", version)
 
 	rm, err := routing.NewPlatformRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
@@ -119,13 +119,13 @@ func runOnce(_ *cobra.Command, _ []string) {
 
 	log.Info("Default gateway detected", "gateway", gateway.String(), "interface", iface)
 
-	chnRoutes, err := config.LoadChnRoutes(cfg.ChnRouteFile)
+	chnRoutes, err := config.LoadChnRoutesWithFallback(routeFile)
 	if err != nil {
 		log.Error("Failed to load Chinese routes", "error", err)
 		os.Exit(1)
 	}
 
-	chnDNS, err := config.LoadChnDNS(cfg.ChnDNSFile)
+	chnDNS, err := config.LoadChnDNSWithFallback(dnsFile)
 	if err != nil {
 		log.Error("Failed to load Chinese DNS", "error", err)
 		os.Exit(1)
@@ -160,14 +160,14 @@ func runDaemon(cmd *cobra.Command, args []string) {
 	if verboseMode {
 		logLevel = "debug"
 	} else if silentMode {
-		logLevel = "warn"
+		logLevel = "error"
 	}
 
-	cfg := config.NewConfig(logLevel, silentMode, true, chnRouteFile, chnDNSFile)
+	cfg := config.NewConfig()
 
-	log := logger.New(cfg)
+	log := logger.New(logLevel)
 
-	sm, err := daemon.NewServiceManager(cfg, log)
+	sm, err := daemon.NewServiceManager(cfg, log, routeFile, dnsFile)
 	if err != nil {
 		log.Error("Failed to create service manager", "error", err)
 		os.Exit(1)
@@ -252,29 +252,29 @@ func testConfiguration(cmd *cobra.Command, args []string) {
 	if verboseMode {
 		logLevel = "debug"
 	} else if silentMode {
-		logLevel = "warn"
+		logLevel = "error"
 	}
 
-	cfg := config.NewConfig(logLevel, silentMode, false, chnRouteFile, chnDNSFile)
+	cfg := config.NewConfig()
 
-	log := logger.New(cfg)
+	log := logger.New(logLevel)
 	log.Debug("Starting configuration test")
 	fmt.Println("✅ Configuration loaded successfully")
 
-	chnRoutes, err := config.LoadChnRoutes(cfg.ChnRouteFile)
+	chnRoutes, err := config.LoadChnRoutesWithFallback(routeFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Failed to load Chinese routes: %v\n", err)
 		os.Exit(1)
 	}
-	log.Debug("Chinese routes loading details", "file", cfg.ChnRouteFile, "networks", chnRoutes.Size())
+	log.Debug("Chinese routes loading details", "file", routeFile, "networks", chnRoutes.Size())
 	fmt.Printf("✅ Chinese routes loaded: %d networks\n", chnRoutes.Size())
 
-	chnDNS, err := config.LoadChnDNS(cfg.ChnDNSFile)
+	chnDNS, err := config.LoadChnDNSWithFallback(dnsFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Failed to load Chinese DNS: %v\n", err)
 		os.Exit(1)
 	}
-	log.Debug("Chinese DNS loading details", "file", cfg.ChnDNSFile, "servers", chnDNS.Size())
+	log.Debug("Chinese DNS loading details", "file", dnsFile, "servers", chnDNS.Size())
 	fmt.Printf("✅ Chinese DNS loaded: %d servers\n", chnDNS.Size())
 
 	rm, err := routing.NewPlatformRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
