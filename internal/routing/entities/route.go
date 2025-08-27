@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/wesleywu/update-routes-native/internal/logger"
+	"github.com/wesleywu/smart-route/internal/logger"
 )
 
 // Route represents a system route table entry

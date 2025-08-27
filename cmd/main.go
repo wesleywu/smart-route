@@ -6,18 +6,20 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
-	"github.com/wesleywu/update-routes-native/internal/config"
-	"github.com/wesleywu/update-routes-native/internal/daemon"
-	"github.com/wesleywu/update-routes-native/internal/logger"
-	"github.com/wesleywu/update-routes-native/internal/routing"
+	"github.com/wesleywu/smart-route/internal/config"
+	"github.com/wesleywu/smart-route/internal/daemon"
+	"github.com/wesleywu/smart-route/internal/logger"
+	"github.com/wesleywu/smart-route/internal/routing"
 )
 
 var (
 	version = "1.0.0"
 
-	configFile  string
-	silentMode  bool
-	verboseMode bool
+	// Removed configFile since we're eliminating config.json
+	silentMode   bool
+	verboseMode  bool
+	chnRouteFile string
+	chnDNSFile   string
 )
 
 func main() {
@@ -70,9 +72,10 @@ func main() {
 		Run:   testConfiguration,
 	}
 
-	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Configuration file path")
 	rootCmd.PersistentFlags().BoolVarP(&silentMode, "silent", "s", false, "Silent mode (no output)")
 	rootCmd.PersistentFlags().BoolVarP(&verboseMode, "verbose", "v", false, "Verbose mode (debug level logging)")
+	rootCmd.PersistentFlags().StringVar(&chnRouteFile, "chn-routes", "configs/chnroute.txt", "Chinese routes file path")
+	rootCmd.PersistentFlags().StringVar(&chnDNSFile, "chn-dns", "configs/chndns.txt", "Chinese DNS file path")
 
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(installCmd)
@@ -88,19 +91,15 @@ func main() {
 }
 
 func runOnce(_ *cobra.Command, _ []string) {
-	cfg, err := config.LoadConfig(configFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
-		os.Exit(1)
-	}
-
-	if silentMode {
-		cfg.SilentMode = true
-	}
-
+	// Determine log level based on command line flags
+	logLevel := "info"
 	if verboseMode {
-		cfg.LogLevel = "debug"
+		logLevel = "debug"
+	} else if silentMode {
+		logLevel = "warn"
 	}
+
+	cfg := config.NewConfig(logLevel, silentMode, false, chnRouteFile, chnDNSFile)
 
 	log := logger.New(cfg)
 	log.Info("Starting one-time route setup", "version", version)
@@ -156,21 +155,15 @@ func runOnce(_ *cobra.Command, _ []string) {
 }
 
 func runDaemon(cmd *cobra.Command, args []string) {
-	cfg, err := config.LoadConfig(configFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
-		os.Exit(1)
-	}
-
-	if silentMode {
-		cfg.SilentMode = true
-	}
-
+	// Determine log level based on command line flags
+	logLevel := "info"
 	if verboseMode {
-		cfg.LogLevel = "debug"
+		logLevel = "debug"
+	} else if silentMode {
+		logLevel = "warn"
 	}
 
-	cfg.DaemonMode = true
+	cfg := config.NewConfig(logLevel, silentMode, true, chnRouteFile, chnDNSFile)
 
 	log := logger.New(cfg)
 
@@ -203,12 +196,8 @@ func installService(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	configPath := "/etc/smartroute/config.json"
-	if configFile != "" {
-		configPath = configFile
-	}
-
-	service := daemon.NewPlatformService(execPath, configPath)
+	// No longer using config files - pass empty string
+	service := daemon.NewPlatformService(execPath, "")
 	if err := service.Install(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to install service: %v\n", err)
 		os.Exit(1)
@@ -258,15 +247,15 @@ func showVersion(cmd *cobra.Command, args []string) {
 }
 
 func testConfiguration(cmd *cobra.Command, args []string) {
-	cfg, err := config.LoadConfig(configFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to load config: %v\n", err)
-		os.Exit(1)
+	// Determine log level based on command line flags
+	logLevel := "info"
+	if verboseMode {
+		logLevel = "debug"
+	} else if silentMode {
+		logLevel = "warn"
 	}
 
-	if verboseMode {
-		cfg.LogLevel = "debug"
-	}
+	cfg := config.NewConfig(logLevel, silentMode, false, chnRouteFile, chnDNSFile)
 
 	log := logger.New(cfg)
 	log.Debug("Starting configuration test")

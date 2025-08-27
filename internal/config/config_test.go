@@ -1,13 +1,12 @@
 package config
 
 import (
-	"os"
 	"testing"
 	"time"
 )
 
-func TestNewDefaultConfig(t *testing.T) {
-	cfg := NewDefaultConfig()
+func TestNewConfig(t *testing.T) {
+	cfg := NewConfig("info", false, false, "configs/chnroute.txt", "configs/chndns.txt")
 	
 	if cfg.LogLevel != "info" {
 		t.Errorf("Expected log level 'info', got '%s'", cfg.LogLevel)
@@ -20,6 +19,10 @@ func TestNewDefaultConfig(t *testing.T) {
 	if cfg.ConcurrencyLimit != 50 {
 		t.Errorf("Expected concurrency limit 50, got %d", cfg.ConcurrencyLimit)
 	}
+	
+	if cfg.ChnRouteFile != "configs/chnroute.txt" {
+		t.Errorf("Expected chn route file 'configs/chnroute.txt', got '%s'", cfg.ChnRouteFile)
+	}
 }
 
 func TestConfigValidation(t *testing.T) {
@@ -30,7 +33,7 @@ func TestConfigValidation(t *testing.T) {
 	}{
 		{
 			name:        "valid config",
-			cfg:         NewDefaultConfig(),
+			cfg:         NewConfig("info", false, false, "configs/chnroute.txt", "configs/chndns.txt"),
 			expectError: false,
 		},
 		{
@@ -69,51 +72,18 @@ func TestConfigValidation(t *testing.T) {
 	}
 }
 
-func TestLoadConfig(t *testing.T) {
-	// Test loading non-existent file (should return default config)
-	cfg, err := LoadConfig("non-existent.json")
+func TestLoadConfigBackwardCompatibility(t *testing.T) {
+	// Test that LoadConfig still works for backward compatibility
+	cfg, err := LoadConfig("any-path")
 	if err != nil {
-		t.Errorf("Expected no error for non-existent file, got: %v", err)
+		t.Errorf("Expected no error for backward compatibility, got: %v", err)
 	}
 	
 	if cfg.LogLevel != "info" {
 		t.Errorf("Expected default log level, got: %s", cfg.LogLevel)
 	}
 	
-	// Test loading empty path (should return default config)
-	cfg, err = LoadConfig("")
-	if err != nil {
-		t.Errorf("Expected no error for empty path, got: %v", err)
-	}
-	
 	if cfg == nil {
 		t.Error("Expected config, got nil")
-	}
-}
-
-func TestConfigSave(t *testing.T) {
-	cfg := NewDefaultConfig()
-	tempFile := "/tmp/test-config.json"
-	
-	defer os.Remove(tempFile)
-	
-	err := cfg.Save(tempFile)
-	if err != nil {
-		t.Errorf("Failed to save config: %v", err)
-	}
-	
-	// Verify file exists
-	if _, err := os.Stat(tempFile); os.IsNotExist(err) {
-		t.Error("Config file was not created")
-	}
-	
-	// Load and verify
-	loadedCfg, err := LoadConfig(tempFile)
-	if err != nil {
-		t.Errorf("Failed to load saved config: %v", err)
-	}
-	
-	if loadedCfg.LogLevel != cfg.LogLevel {
-		t.Errorf("Config mismatch after save/load")
 	}
 }

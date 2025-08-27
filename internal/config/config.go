@@ -1,40 +1,41 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 )
 
 type Config struct {
-	// 基本配置
-	LogLevel   string `json:"log_level"`
-	SilentMode bool   `json:"silent_mode"`
-	DaemonMode bool   `json:"daemon_mode"`
+	// 基本配置 - 由命令行参数设置
+	LogLevel   string
+	SilentMode bool
+	DaemonMode bool
 
-	// 文件路径
-	ChnRouteFile string `json:"chn_route_file"`
-	ChnDNSFile   string `json:"chn_dns_file"`
+	// 文件路径 - 由命令行参数设置
+	ChnRouteFile string
+	ChnDNSFile   string
 
-	// 网络配置
-	MonitorInterval time.Duration `json:"monitor_interval"`
-	RetryAttempts   int           `json:"retry_attempts"`
-	RouteTimeout    time.Duration `json:"route_timeout"`
+	// 网络配置 - 硬编码默认值
+	MonitorInterval time.Duration
+	RetryAttempts   int
+	RouteTimeout    time.Duration
 
-	// 性能配置
-	ConcurrencyLimit int `json:"concurrency_limit"`
-	BatchSize        int `json:"batch_size"`
+	// 性能配置 - 硬编码默认值
+	ConcurrencyLimit int
+	BatchSize        int
 }
 
-func NewDefaultConfig() *Config {
+// NewConfig creates a new config with command line parameters
+func NewConfig(logLevel string, silentMode, daemonMode bool, chnRouteFile, chnDNSFile string) *Config {
 	return &Config{
-		LogLevel:         "info",
-		SilentMode:       false,
-		DaemonMode:       false,
-		ChnRouteFile:     "configs/chnroute.txt",
-		ChnDNSFile:       "configs/chdns.txt",
-		MonitorInterval:  2 * time.Second, // 智能轮询间隔，仅在实时事件异常时启用
+		LogLevel:         logLevel,
+		SilentMode:       silentMode,
+		DaemonMode:       daemonMode,
+		ChnRouteFile:     chnRouteFile,
+		ChnDNSFile:       chnDNSFile,
+		
+		// 硬编码的合理默认值
+		MonitorInterval:  2 * time.Second,
 		RetryAttempts:    3,
 		RouteTimeout:     30 * time.Second,
 		ConcurrencyLimit: 50,
@@ -42,30 +43,11 @@ func NewDefaultConfig() *Config {
 	}
 }
 
+// LoadConfig is deprecated - use NewConfig instead
+// Kept for backward compatibility, always returns default config
 func LoadConfig(path string) (*Config, error) {
-	config := NewDefaultConfig()
-
-	if path == "" {
-		return config, nil
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return config, nil
-		}
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	if err := json.Unmarshal(data, config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
-	}
-
-	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
-	}
-
-	return config, nil
+	// Return hardcoded config with default file paths
+	return NewConfig("info", false, false, "configs/chnroute.txt", "configs/chndns.txt"), nil
 }
 
 func (c *Config) Validate() error {
@@ -103,15 +85,4 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c *Config) Save(path string) error {
-	data, err := json.MarshalIndent(c, "", "    ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
-	}
-
-	return nil
-}
+// Save method removed - config is now managed via command line parameters

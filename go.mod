@@ -1,4 +1,4 @@
-module github.com/wesleywu/update-routes-native
+module github.com/wesleywu/smart-route
 
 go 1.21
 

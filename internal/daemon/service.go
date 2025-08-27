@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wesleywu/update-routes-native/internal/config"
-	"github.com/wesleywu/update-routes-native/internal/logger"
-	"github.com/wesleywu/update-routes-native/internal/routing"
-	"github.com/wesleywu/update-routes-native/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/config"
+	"github.com/wesleywu/smart-route/internal/logger"
+	"github.com/wesleywu/smart-route/internal/routing"
+	"github.com/wesleywu/smart-route/internal/routing/entities"
 )
 
 // ServiceManager is a manager for the service

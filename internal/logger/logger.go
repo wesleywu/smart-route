@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/wesleywu/update-routes-native/internal/config"
+	"github.com/wesleywu/smart-route/internal/config"
 )
 
 type Logger struct {

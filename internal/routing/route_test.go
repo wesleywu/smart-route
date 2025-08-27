@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesleywu/update-routes-native/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/entities"
 )
 
 func TestRouteOperationError(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesleywu/update-routes-native/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/entities"
 )
 
 // NetworkMonitor monitors network changes and VPN state using event-driven architecture

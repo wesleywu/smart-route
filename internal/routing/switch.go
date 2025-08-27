@@ -5,9 +5,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/wesleywu/update-routes-native/internal/config"
-	"github.com/wesleywu/update-routes-native/internal/logger"
-	"github.com/wesleywu/update-routes-native/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/config"
+	"github.com/wesleywu/smart-route/internal/logger"
+	"github.com/wesleywu/smart-route/internal/routing/entities"
 )
 
 // RouteSwitch handles the complete route switching logic used by both one-time and daemon modes

@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/wesleywu/update-routes-native/internal/logger"
-	"github.com/wesleywu/update-routes-native/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/logger"
+	"github.com/wesleywu/smart-route/internal/routing/entities"
 	"golang.org/x/sys/unix"
 )
 
