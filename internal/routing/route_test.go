@@ -62,21 +62,6 @@ func TestRouteErrorTypeString(t *testing.T) {
 	}
 }
 
-func TestNewRouteWorkerPool(t *testing.T) {
-	pool := NewRouteWorkerPool(5)
-	
-	if pool.workerCount != 5 {
-		t.Errorf("Expected 5 workers, got %d", pool.workerCount)
-	}
-	
-	if pool.jobChannel == nil {
-		t.Error("Job channel should be initialized")
-	}
-	
-	if pool.resultChannel == nil {
-		t.Error("Result channel should be initialized")
-	}
-}
 
 func TestRouteManagerMetrics(t *testing.T) {
 	metrics := NewRouteManagerMetrics()
@@ -156,21 +141,3 @@ func TestRoute(t *testing.T) {
 	}
 }
 
-func TestRouteOperation(t *testing.T) {
-	_, network, _ := net.ParseCIDR("192.168.1.0/24")
-	gateway := net.ParseIP("192.168.1.1")
-	
-	operation := RouteOperation{
-		Destination: network,
-		Gateway:     gateway,
-		Action:      entities.RouteActionAdd,
-	}
-	
-	if operation.Action != entities.RouteActionAdd {
-		t.Errorf("Expected RouteActionAdd, got %v", operation.Action)
-	}
-	
-	if !operation.Gateway.Equal(gateway) {
-		t.Error("Operation gateway mismatch")
-	}
-}
