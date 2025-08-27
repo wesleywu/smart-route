@@ -78,6 +78,7 @@ func (s *LaunchdService) Install() error {
 
 // Uninstall uninstalls the launchd service
 func (s *LaunchdService) Uninstall() error {
+	// Check if running as root for service uninstall
 	if os.Getuid() != 0 {
 		return fmt.Errorf("root privileges required to uninstall launchd service")
 	}

@@ -129,10 +129,14 @@ sudo launchctl unload /Library/LaunchDaemons/com.smartroute.plist
 sudo launchctl load /Library/LaunchDaemons/com.smartroute.plist
 ```
 
-#### 卸载服务
+#### 完全卸载
 ```bash
-# 完全卸载系统服务
+# 完全卸载（包括系统服务和二进制文件）
 sudo smartroute uninstall
+
+# 或者分步卸载
+sudo launchctl unload /Library/LaunchDaemons/com.smartroute.plist  # 停止服务
+sudo smartroute uninstall                                          # 完全清理
 ```
 
 ### 查看日志

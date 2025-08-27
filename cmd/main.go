@@ -238,17 +238,56 @@ func installService(cmd *cobra.Command, args []string) {
 }
 
 func uninstallService(cmd *cobra.Command, args []string) {
-	if os.Getuid() != 0 {
-		fmt.Fprintf(os.Stderr, "Error: Root privileges required for uninstallation\n")
-		os.Exit(1)
-	}
-
+	// Try to uninstall system service
+	fmt.Printf("Uninstalling system service...\n")
 	service := daemon.NewPlatformService("", "")
 	if err := service.Uninstall(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to uninstall service: %v\n", err)
-		os.Exit(1)
+		if os.Getuid() != 0 {
+			fmt.Printf("⚠️  Service uninstall requires sudo privileges\n")
+			fmt.Printf("Run with: sudo smartroute uninstall\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Failed to uninstall service: %v\n", err)
+		}
+	} else {
+		fmt.Printf("✓ System service uninstalled\n")
 	}
-	fmt.Println("Service uninstalled successfully")
+
+	// Remove binary file
+	currentExecPath, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not get executable path: %v\n", err)
+		fmt.Println("Please manually remove the binary file if needed")
+		return
+	}
+
+	// Check if binary is in user's local bin directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not get home directory: %v\n", err)
+		fmt.Println("Please manually remove the binary file if needed")
+		return
+	}
+
+	localBinPath := filepath.Join(homeDir, ".local", "bin", "smartroute")
+	
+	// Only remove if it's in the standard install location
+	if currentExecPath == localBinPath {
+		fmt.Printf("Removing binary file: %s\n", currentExecPath)
+		if err := os.Remove(currentExecPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to remove binary: %v\n", err)
+			fmt.Printf("Please manually remove: %s\n", currentExecPath)
+		} else {
+			fmt.Printf("✓ Binary file removed\n")
+		}
+	} else {
+		fmt.Printf("Binary file not in standard location, skipping removal\n")
+		fmt.Printf("Current location: %s\n", currentExecPath)
+		fmt.Printf("You may manually remove it if needed\n")
+	}
+
+	fmt.Printf("\n🗑️  Smart Route Manager uninstalled successfully!\n")
+	fmt.Printf("\nNote: You may need to restart your terminal or run:\n")
+	fmt.Printf("  source ~/.$(basename \"$SHELL\")rc\n")
 }
 
 func showStatus(cmd *cobra.Command, args []string) {
