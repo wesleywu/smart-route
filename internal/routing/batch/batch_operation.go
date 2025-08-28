@@ -7,21 +7,21 @@ import (
 
 	"github.com/panjf2000/ants/v2"
 	"github.com/wesleywu/smart-route/internal/logger"
-	"github.com/wesleywu/smart-route/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/types"
 )
 
 // OperationFunc is a function that performs an operation on a route
 type OperationFunc func(*net.IPNet, net.IP, *logger.Logger) error
 
 // Process performs a batch operation on a list of routes with a concurrency limit
-func Process(routes []*entities.Route, operationFunc OperationFunc, concurrencyLimit int, log *logger.Logger) error {
+func Process(routes []*types.Route, operationFunc OperationFunc, concurrencyLimit int, log *logger.Logger) error {
 	semaphore := make(chan struct{}, concurrencyLimit)
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(routes))
 
 	for _, route := range routes {
 		wg.Add(1)
-		go func(r *entities.Route) {
+		go func(r *types.Route) {
 			defer wg.Done()
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
@@ -50,7 +50,7 @@ func Process(routes []*entities.Route, operationFunc OperationFunc, concurrencyL
 }
 
 // ProcessUsingAnts performs a batch operation on a list of routes with a concurrency limit, using ants pool
-func ProcessUsingAnts(routes []*entities.Route, operationFunc OperationFunc, concurrencyLimit int, log *logger.Logger) error {
+func ProcessUsingAnts(routes []*types.Route, operationFunc OperationFunc, concurrencyLimit int, log *logger.Logger) error {
 	var wg sync.WaitGroup
 	pool, _ := ants.NewPool(concurrencyLimit)
 	errChan := make(chan error, len(routes))

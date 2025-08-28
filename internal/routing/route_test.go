@@ -5,22 +5,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesleywu/smart-route/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/types"
 )
 
 func TestRouteOperationError(t *testing.T) {
 	_, network, _ := net.ParseCIDR("192.168.1.0/24")
 	gateway := net.ParseIP("192.168.1.1")
 	
-	err := &entities.RouteOperationError{
-		ErrorType:   entities.RouteErrPermission,
+	err := &types.RouteOperationError{
+		ErrorType:   types.RouteErrPermission,
 		Destination: *network,  // Dereference pointer to get value
 		Gateway:     gateway,
 		Cause:       nil,
 	}
 	
-	if err.ErrorType != entities.RouteErrPermission {
-		t.Errorf("Expected error type %v, got %v", entities.RouteErrPermission, err.ErrorType)
+	if err.ErrorType != types.RouteErrPermission {
+		t.Errorf("Expected error type %v, got %v", types.RouteErrPermission, err.ErrorType)
 	}
 	
 	if err.IsRetryable() {
@@ -28,8 +28,8 @@ func TestRouteOperationError(t *testing.T) {
 	}
 	
 	// Test retryable error
-	networkErr := &entities.RouteOperationError{
-		ErrorType:   entities.RouteErrNetwork,
+	networkErr := &types.RouteOperationError{
+		ErrorType:   types.RouteErrNetwork,
 		Destination: *network,  // Dereference pointer to get value
 		Gateway:     gateway,
 		Cause:       nil,
@@ -42,15 +42,15 @@ func TestRouteOperationError(t *testing.T) {
 
 func TestRouteErrorTypeString(t *testing.T) {
 	tests := []struct {
-		errorType entities.RouteErrorType
+		errorType types.RouteErrorType
 		expected  string
 	}{
-		{entities.RouteErrPermission, "Permission"},
-		{entities.RouteErrNetwork, "Network"},
-		{entities.RouteErrInvalidRoute, "InvalidRoute"},
-		{entities.RouteErrSystemCall, "SystemCall"},
-		{entities.RouteErrTimeout, "Timeout"},
-		{entities.RouteErrNotFound, "NotFound"},
+		{types.RouteErrPermission, "Permission"},
+		{types.RouteErrNetwork, "Network"},
+		{types.RouteErrInvalidRoute, "InvalidRoute"},
+		{types.RouteErrSystemCall, "SystemCall"},
+		{types.RouteErrTimeout, "Timeout"},
+		{types.RouteErrNotFound, "NotFound"},
 	}
 	
 	for _, tt := range tests {
@@ -117,7 +117,7 @@ func TestRoute(t *testing.T) {
 	_, network, _ := net.ParseCIDR("192.168.1.0/24")
 	gateway := net.ParseIP("192.168.1.1")
 	
-	route := entities.Route{
+	route := types.Route{
 		Destination: *network,  // Dereference pointer to get value
 		Gateway:     gateway,
 		Metric:      1,

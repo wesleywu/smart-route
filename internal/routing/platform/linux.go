@@ -12,7 +12,7 @@ import (
 
 	"github.com/wesleywu/smart-route/internal/logger"
 	"github.com/wesleywu/smart-route/internal/routing/batch"
-	"github.com/wesleywu/smart-route/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/types"
 	"github.com/wesleywu/smart-route/internal/routing/metrics"
 	"github.com/wesleywu/smart-route/internal/utils"
 )
@@ -25,7 +25,7 @@ type LinuxRouteManager struct {
 }
 
 // NewPlatformRouteManager creates a platform-specific route manager (Linux implementation)
-func NewPlatformRouteManager(concurrencyLimit, maxRetries int) (entities.RouteManager, error) {
+func NewPlatformRouteManager(concurrencyLimit, maxRetries int) (types.RouteManager, error) {
 	return &LinuxRouteManager{
 		concurrencyLimit: concurrencyLimit,
 		maxRetries:       maxRetries,
@@ -41,11 +41,11 @@ func (rm *LinuxRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log
 	return rm.deleteRouteWithRetry(network, gateway)
 }
 
-func (rm *LinuxRouteManager) BatchAddRoutes(routes []*entities.Route, log *logger.Logger) error {
+func (rm *LinuxRouteManager) BatchAddRoutes(routes []*types.Route, log *logger.Logger) error {
 	return batch.ProcessUsingAnts(routes, rm.AddRoute, rm.concurrencyLimit, log)
 }
 
-func (rm *LinuxRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *logger.Logger) error {
+func (rm *LinuxRouteManager) BatchDeleteRoutes(routes []*types.Route, log *logger.Logger) error {
 	return batch.ProcessUsingAnts(routes, rm.DeleteRoute, rm.concurrencyLimit, log)
 }
 
@@ -69,7 +69,7 @@ func (rm *LinuxRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 }
 
 // ListSystemRoutes gets all routes from the system routing table
-func (rm *LinuxRouteManager) ListSystemRoutes() ([]*entities.Route, error) {
+func (rm *LinuxRouteManager) ListSystemRoutes() ([]*types.Route, error) {
 	cmd := exec.Command("netstat", "-rn")
 	output, err := cmd.Output()
 	if err != nil {
@@ -94,7 +94,7 @@ func (rm *LinuxRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.I
 			return nil
 		}
 
-		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*types.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -118,7 +118,7 @@ func (rm *LinuxRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway ne
 			return nil
 		}
 
-		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*types.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -140,14 +140,14 @@ func (rm *LinuxRouteManager) addRouteDirect(network *net.IPNet, gateway net.IP) 
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			switch exitErr.ExitCode() {
 			case 1:
-				return &entities.RouteOperationError{ErrorType: entities.RouteErrPermission, Destination: *network, Gateway: gateway, Cause: err}
+				return &types.RouteOperationError{ErrorType: types.RouteErrPermission, Destination: *network, Gateway: gateway, Cause: err}
 			case 2:
-				return &entities.RouteOperationError{ErrorType: entities.RouteErrInvalidRoute, Destination: *network, Gateway: gateway, Cause: err}
+				return &types.RouteOperationError{ErrorType: types.RouteErrInvalidRoute, Destination: *network, Gateway: gateway, Cause: err}
 			default:
-				return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
+				return &types.RouteOperationError{ErrorType: types.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 			}
 		}
-		return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
+		return &types.RouteOperationError{ErrorType: types.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 	}
 
 	return nil
@@ -164,7 +164,7 @@ func (rm *LinuxRouteManager) deleteRouteDirect(network *net.IPNet, gateway net.I
 				return nil
 			}
 		}
-		return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
+		return &types.RouteOperationError{ErrorType: types.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 	}
 
 	return nil
@@ -197,8 +197,8 @@ func (rm *LinuxRouteManager) parseDefaultRouteLinux(output string) (net.IP, stri
 }
 
 // parseNetstatOutputLinux parses the output of netstat -rn for Linux systems
-func parseNetstatOutputLinux(output string) ([]*entities.Route, error) {
-	var routes []*entities.Route
+func parseNetstatOutputLinux(output string) ([]*types.Route, error) {
+	var routes []*types.Route
 	lines := strings.Split(output, "\n")
 
 	// Skip header lines and find the start of routing table
@@ -262,7 +262,7 @@ func parseNetstatOutputLinux(output string) ([]*entities.Route, error) {
 			continue // Skip unparseable gateways (like link# formats)
 		}
 
-		route := &entities.Route{
+		route := &types.Route{
 			Destination: *network,
 			Gateway:     gwIP,
 		}

@@ -9,7 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/wesleywu/smart-route/internal/logger"
-	"github.com/wesleywu/smart-route/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/types"
 	"golang.org/x/sys/unix"
 )
 
@@ -192,8 +192,8 @@ func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, g
 			operation = "delete"
 		}
 		log.Error("Failed to send route message", "error", err, "operation", operation, "network", network.String(), "gateway", gateway.String())
-		return &entities.RouteOperationError{
-			ErrorType:   entities.RouteErrSystemCall,
+		return &types.RouteOperationError{
+			ErrorType:   types.RouteErrSystemCall,
 			Destination: *network,
 			Gateway:     gateway,
 			Cause:       fmt.Errorf("failed to send route message: %w", err),

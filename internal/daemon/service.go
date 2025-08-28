@@ -13,7 +13,7 @@ import (
 	"github.com/wesleywu/smart-route/internal/config"
 	"github.com/wesleywu/smart-route/internal/logger"
 	"github.com/wesleywu/smart-route/internal/routing"
-	"github.com/wesleywu/smart-route/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/types"
 )
 
 // ServiceManager is a manager for the service
@@ -21,7 +21,7 @@ type ServiceManager struct {
 	config       *config.Config
 	logger       *logger.Logger
 	monitor      *routing.NetworkMonitor
-	router       entities.RouteManager
+	router       types.RouteManager
 	routeSwitch  *routing.RouteSwitch
 	managedIPSet        *config.IPSet
 	stopChan     chan os.Signal

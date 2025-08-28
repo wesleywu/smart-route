@@ -4,12 +4,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesleywu/smart-route/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/types"
 	"github.com/wesleywu/smart-route/internal/routing/platform"
 )
 
 // NewPlatformRouteManager creates a platform-specific route manager instance
-func NewPlatformRouteManager(concurrencyLimit int, maxRetries int) (entities.RouteManager, error) {
+func NewPlatformRouteManager(concurrencyLimit int, maxRetries int) (types.RouteManager, error) {
 	return platform.NewPlatformRouteManager(concurrencyLimit, maxRetries)
 }
 

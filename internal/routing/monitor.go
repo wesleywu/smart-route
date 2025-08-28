@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/wesleywu/smart-route/internal/logger"
-	"github.com/wesleywu/smart-route/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/types"
 )
 
 // NetworkMonitor monitors network changes and VPN state using event-driven architecture
@@ -36,7 +36,7 @@ type NetworkMonitor struct {
 	healthCheckInterval time.Duration
 	
 	// Route manager for gateway queries
-	routeManager entities.RouteManager
+	routeManager types.RouteManager
 	
 	// Logger for debug and monitoring output
 	logger *logger.Logger
@@ -101,7 +101,7 @@ func (e EventType) String() string {
 }
 
 // NewNetworkMonitor creates a new NetworkMonitor with event-driven architecture
-func NewNetworkMonitor(pollInterval time.Duration, routeManager entities.RouteManager, logger *logger.Logger) (*NetworkMonitor, error) {
+func NewNetworkMonitor(pollInterval time.Duration, routeManager types.RouteManager, logger *logger.Logger) (*NetworkMonitor, error) {
 	if routeManager == nil {
 		return nil, fmt.Errorf("route manager cannot be nil")
 	}

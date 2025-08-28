@@ -13,7 +13,7 @@ import (
 
 	"github.com/wesleywu/smart-route/internal/logger"
 	"github.com/wesleywu/smart-route/internal/routing/batch"
-	"github.com/wesleywu/smart-route/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/types"
 	"github.com/wesleywu/smart-route/internal/routing/metrics"
 	"github.com/wesleywu/smart-route/internal/utils"
 	"golang.org/x/sys/unix"
@@ -30,7 +30,7 @@ type BSDRouteManager struct {
 }
 
 // NewPlatformRouteManager creates a platform-specific route manager (BSD implementation)
-func NewPlatformRouteManager(concurrencyLimit, maxRetries int) (entities.RouteManager, error) {
+func NewPlatformRouteManager(concurrencyLimit, maxRetries int) (types.RouteManager, error) {
 	sock, err := unix.Socket(unix.AF_ROUTE, unix.SOCK_RAW, unix.AF_UNSPEC)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create route socket: %w", err)
@@ -56,12 +56,12 @@ func (rm *BSDRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log *
 }
 
 // BatchAddRoutes adds multiple routes to the system
-func (rm *BSDRouteManager) BatchAddRoutes(routes []*entities.Route, log *logger.Logger) error {
+func (rm *BSDRouteManager) BatchAddRoutes(routes []*types.Route, log *logger.Logger) error {
 	return batch.ProcessUsingAnts(routes, rm.AddRoute, rm.concurrencyLimit, log)
 }
 
 // BatchDeleteRoutes deletes multiple routes from the system
-func (rm *BSDRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *logger.Logger) error {
+func (rm *BSDRouteManager) BatchDeleteRoutes(routes []*types.Route, log *logger.Logger) error {
 	return batch.ProcessUsingAnts(routes, rm.DeleteRoute, rm.concurrencyLimit, log)
 }
 
@@ -131,7 +131,7 @@ func (rm *BSDRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 }
 
 // ListSystemRoutes gets all routes from the system
-func (rm *BSDRouteManager) ListSystemRoutes() ([]*entities.Route, error) {
+func (rm *BSDRouteManager) ListSystemRoutes() ([]*types.Route, error) {
 	cmd := exec.Command("netstat", "-rn")
 	output, err := cmd.Output()
 	if err != nil {
@@ -158,7 +158,7 @@ func (rm *BSDRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP,
 			return nil
 		}
 
-		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*types.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -184,7 +184,7 @@ func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.
 			return nil
 		}
 
-		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*types.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -198,8 +198,8 @@ func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.
 }
 
 // parseNetstatOutputBSD parses the output of netstat -rn for BSD systems
-func parseNetstatOutputBSD(output string) ([]*entities.Route, error) {
-	var routes []*entities.Route
+func parseNetstatOutputBSD(output string) ([]*types.Route, error) {
+	var routes []*types.Route
 	lines := strings.Split(output, "\n")
 
 	// Skip header lines and find the start of routing table
@@ -263,7 +263,7 @@ func parseNetstatOutputBSD(output string) ([]*entities.Route, error) {
 			continue // Skip unparseable gateways (like link# formats)
 		}
 
-		route := &entities.Route{
+		route := &types.Route{
 			Destination: *network,
 			Gateway:     gwIP,
 		}

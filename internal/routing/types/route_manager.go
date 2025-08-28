@@ -1,4 +1,4 @@
-package entities
+package types
 
 import (
 	"net"
@@ -27,5 +27,3 @@ type RouteManager interface {
 	// Resource management
 	Close() error
 }
-
-

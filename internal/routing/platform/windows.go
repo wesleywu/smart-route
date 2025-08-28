@@ -13,7 +13,7 @@ import (
 
 	"github.com/wesleywu/smart-route/internal/logger"
 	"github.com/wesleywu/smart-route/internal/routing/batch"
-	"github.com/wesleywu/smart-route/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/types"
 	"github.com/wesleywu/smart-route/internal/routing/metrics"
 )
 
@@ -25,7 +25,7 @@ type WindowsRouteManager struct {
 }
 
 // NewPlatformRouteManager creates a platform-specific route manager (Windows implementation)
-func NewPlatformRouteManager(concurrencyLimit, maxRetries int) (entities.RouteManager, error) {
+func NewPlatformRouteManager(concurrencyLimit, maxRetries int) (types.RouteManager, error) {
 	return &WindowsRouteManager{
 		concurrencyLimit: concurrencyLimit,
 		maxRetries:       maxRetries,
@@ -41,11 +41,11 @@ func (rm *WindowsRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, l
 	return rm.deleteRouteWithRetry(network, gateway)
 }
 
-func (rm *WindowsRouteManager) BatchAddRoutes(routes []*entities.Route, log *logger.Logger) error {
+func (rm *WindowsRouteManager) BatchAddRoutes(routes []*types.Route, log *logger.Logger) error {
 	return batch.ProcessUsingAnts(routes, rm.AddRoute, rm.concurrencyLimit, log)
 }
 
-func (rm *WindowsRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *logger.Logger) error {
+func (rm *WindowsRouteManager) BatchDeleteRoutes(routes []*types.Route, log *logger.Logger) error {
 	return batch.ProcessUsingAnts(routes, rm.DeleteRoute, rm.concurrencyLimit, log)
 }
 
@@ -85,7 +85,7 @@ func (rm *WindowsRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 //   255.255.255.255  255.255.255.255         On-link         127.0.0.1    331
 //   255.255.255.255  255.255.255.255         On-link       10.211.55.9    271
 // ===========================================================================
-func (rm *WindowsRouteManager) ListSystemRoutes() ([]*entities.Route, error) {
+func (rm *WindowsRouteManager) ListSystemRoutes() ([]*types.Route, error) {
 	cmd := exec.Command("netstat", "-rn")
 	_, err := cmd.Output()
 	if err != nil {
@@ -103,7 +103,7 @@ func (rm *WindowsRouteManager) FlushRoutes(gateway net.IP) error {
 		return fmt.Errorf("failed to list routes: %w", err)
 	}
 
-	var routesToDelete []*entities.Route
+	var routesToDelete []*types.Route
 	for _, route := range routes {
 		if route.Gateway.Equal(gateway) {
 			routesToDelete = append(routesToDelete, route)
@@ -128,7 +128,7 @@ func (rm *WindowsRouteManager) addRouteWithRetry(network *net.IPNet, gateway net
 			return nil
 		}
 
-		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*types.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -152,7 +152,7 @@ func (rm *WindowsRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway 
 			return nil
 		}
 
-		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
+		if routeErr, ok := err.(*types.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
@@ -175,14 +175,14 @@ func (rm *WindowsRouteManager) addRouteDirect(network *net.IPNet, gateway net.IP
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			switch exitErr.ExitCode() {
 			case 1:
-				return &entities.RouteOperationError{ErrorType: entities.RouteErrPermission, Destination: *network, Gateway: gateway, Cause: err}
+				return &types.RouteOperationError{ErrorType: types.RouteErrPermission, Destination: *network, Gateway: gateway, Cause: err}
 			case 87:
-				return &entities.RouteOperationError{ErrorType: entities.RouteErrInvalidRoute, Destination: *network, Gateway: gateway, Cause: err}
+				return &types.RouteOperationError{ErrorType: types.RouteErrInvalidRoute, Destination: *network, Gateway: gateway, Cause: err}
 			default:
-				return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
+				return &types.RouteOperationError{ErrorType: types.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 			}
 		}
-		return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
+		return &types.RouteOperationError{ErrorType: types.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 	}
 
 	_ = ones
@@ -200,7 +200,7 @@ func (rm *WindowsRouteManager) deleteRouteDirect(network *net.IPNet, gateway net
 				return nil
 			}
 		}
-		return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
+		return &types.RouteOperationError{ErrorType: types.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 	}
 
 	return nil

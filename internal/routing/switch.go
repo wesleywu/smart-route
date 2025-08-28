@@ -7,19 +7,19 @@ import (
 
 	"github.com/wesleywu/smart-route/internal/config"
 	"github.com/wesleywu/smart-route/internal/logger"
-	"github.com/wesleywu/smart-route/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/routing/types"
 	"github.com/wesleywu/smart-route/internal/utils"
 )
 
 // RouteSwitch handles the complete route switching logic used by both one-time and daemon modes
 type RouteSwitch struct {
-	rm           entities.RouteManager
+	rm           types.RouteManager
 	managedIPSet *config.IPSet
 	logger       *logger.Logger
 }
 
 // NewRouteSwitch creates a new route switch handler
-func NewRouteSwitch(rm entities.RouteManager, managedIPSet *config.IPSet, logger *logger.Logger) (*RouteSwitch, error) {
+func NewRouteSwitch(rm types.RouteManager, managedIPSet *config.IPSet, logger *logger.Logger) (*RouteSwitch, error) {
 	return &RouteSwitch{
 		rm:           rm,
 		managedIPSet: managedIPSet,
@@ -117,7 +117,7 @@ func (rs *RouteSwitch) CleanRoutes() error {
 }
 
 // addRoutes adds all managed routes for the specified gateway
-func (rs *RouteSwitch) addRoutes(routesToAdd []*entities.Route) error {
+func (rs *RouteSwitch) addRoutes(routesToAdd []*types.Route) error {
 	start := time.Now()
 
 	rs.logger.Debug("Setting up routes", "routes to setup:", len(routesToAdd))
@@ -135,7 +135,7 @@ func (rs *RouteSwitch) addRoutes(routesToAdd []*entities.Route) error {
 }
 
 // CleanRoutes removes all routes for networks defined in Chinese DNS and route files
-func (rs *RouteSwitch) cleanRoutes(routesToDelete []*entities.Route) error {
+func (rs *RouteSwitch) cleanRoutes(routesToDelete []*types.Route) error {
 	start := time.Now()
 
 	rs.logger.Debug("Starting complete route cleanup", "routes to delete: ", len(routesToDelete))
@@ -155,8 +155,8 @@ func (rs *RouteSwitch) cleanRoutes(routesToDelete []*entities.Route) error {
 	return nil
 }
 
-func findMatchingRoute(systemRoutes []*entities.Route, managedRouteSet *config.IPSet) []*entities.Route {
-	matchingRoutes := make([]*entities.Route, 0)
+func findMatchingRoute(systemRoutes []*types.Route, managedRouteSet *config.IPSet) []*types.Route {
+	matchingRoutes := make([]*types.Route, 0)
 	for _, route := range systemRoutes {
 		if managedRouteSet.ContainsIPNet(route.Destination) {
 			matchingRoutes = append(matchingRoutes, route)
@@ -165,10 +165,10 @@ func findMatchingRoute(systemRoutes []*entities.Route, managedRouteSet *config.I
 	return matchingRoutes
 }
 
-func buildRoutesFromIPSet(ipSet *config.IPSet, gateway net.IP) []*entities.Route {
-	routes := make([]*entities.Route, 0)
+func buildRoutesFromIPSet(ipSet *config.IPSet, gateway net.IP) []*types.Route {
+	routes := make([]*types.Route, 0)
 	for _, network := range ipSet.IPNets() {
-		routes = append(routes, &entities.Route{
+		routes = append(routes, &types.Route{
 			Destination: *network,
 			Gateway:     gateway,
 		})

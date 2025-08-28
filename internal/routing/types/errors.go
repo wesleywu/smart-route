@@ -1,4 +1,4 @@
-package entities
+package types
 
 import (
 	"fmt"
@@ -12,7 +12,6 @@ type RouteOperationError struct {
 	Gateway     net.IP    // The gateway involved in the error
 	Cause       error     // Underlying error
 }
-
 
 // RouteErrorType represents the category of routing operation error
 type RouteErrorType int
