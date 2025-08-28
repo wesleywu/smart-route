@@ -14,7 +14,6 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-INSTALL_DIR="$HOME/.local/bin"
 BINARY_NAME="smartroute"
 REPO_URL="https://github.com/wesleywu/smart-route"
 SERVICE_NAME="com.smartroute.daemon"
@@ -46,14 +45,21 @@ check_macos() {
     print_info "✓ macOS detected"
 }
 
-# Check sudo access
-check_sudo() {
-    print_info "This installation requires sudo access to install the system service"
-    if ! sudo -v; then
-        print_error "sudo access required for service installation"
+# Check if running with appropriate permissions
+check_permissions() {
+    if [[ $EUID -eq 0 ]]; then
+        # Running as root (via sudo)
+        if [[ -z "$SUDO_USER" ]]; then
+            print_error "Please run with sudo, not as root user directly"
+            exit 1
+        fi
+        INSTALL_DIR="/usr/local/bin"
+        print_info "✓ Running with sudo (installing to system-wide location)"
+    else
+        print_error "This installation requires sudo access to install the system service"
+        print_error "Please run: curl -sSL <script-url> | sudo bash"
         exit 1
     fi
-    print_info "✓ sudo access confirmed"
 }
 
 # Create installation directory
@@ -144,56 +150,14 @@ download_binary() {
 }
 
 
-# Check and add to PATH
+# Check PATH
 setup_path() {
-    local shell_name=$(basename "$SHELL")
-    local rc_file=""
-    local path_line="export PATH=\"\$HOME/.local/bin:\$PATH\""
-    
-    # Determine the correct RC file
-    case "$shell_name" in
-        "zsh")
-            rc_file="$HOME/.zshrc"
-            ;;
-        "bash")
-            rc_file="$HOME/.bashrc"
-            # On macOS, also check .bash_profile
-            if [[ ! -f "$rc_file" && -f "$HOME/.bash_profile" ]]; then
-                rc_file="$HOME/.bash_profile"
-            fi
-            ;;
-        *)
-            print_warning "Unknown shell: $shell_name. You may need to manually add $INSTALL_DIR to your PATH"
-            return
-            ;;
-    esac
-    
-    # Check if PATH is already set
-    if echo "$PATH" | grep -q "$INSTALL_DIR"; then
-        print_info "✓ $INSTALL_DIR already in PATH"
-        return
-    fi
-    
-    # Add to RC file if not present
-    if [[ -f "$rc_file" ]]; then
-        if ! grep -q "$HOME/.local/bin" "$rc_file"; then
-            print_info "Adding $INSTALL_DIR to PATH in $rc_file"
-            echo "" >> "$rc_file"
-            echo "# Added by Smart Route Manager installer" >> "$rc_file"
-            echo "$path_line" >> "$rc_file"
-            print_success "✓ Added to $rc_file"
-        else
-            print_info "✓ $INSTALL_DIR already configured in $rc_file"
-        fi
+    # /usr/local/bin is typically in PATH by default on macOS
+    if echo "$PATH" | grep -q "/usr/local/bin"; then
+        print_info "✓ /usr/local/bin is in PATH"
     else
-        print_info "Creating $rc_file and adding PATH"
-        echo "$path_line" > "$rc_file"
-        print_success "✓ Created $rc_file with PATH configuration"
+        print_warning "/usr/local/bin is not in PATH. You may need to add it manually"
     fi
-    
-    # Export for current session
-    export PATH="$HOME/.local/bin:$PATH"
-    print_info "✓ PATH updated for current session"
 }
 
 # Install system service
@@ -280,7 +244,7 @@ print_usage() {
     echo "  tail -f /var/log/smartroute.err.log   # View service errors"
     echo
     if ! command -v "$BINARY_NAME" >/dev/null 2>&1; then
-        print_warning "Note: Restart your terminal or run 'source ~/.$(basename "$SHELL")rc' to use $BINARY_NAME command"
+        print_warning "Note: $BINARY_NAME command not found in PATH. You may need to restart your terminal."
     fi
 }
 
@@ -296,7 +260,7 @@ main() {
     print_info "Starting installation..."
     
     check_macos
-    check_sudo
+    check_permissions
     detect_platform
     create_install_dir
     download_binary
