@@ -46,13 +46,14 @@ check_macos() {
     print_info "✓ macOS detected"
 }
 
-# Check if running as root (should not be)
-check_not_root() {
-    if [[ $EUID -eq 0 ]]; then
-        print_error "Do not run this script as root. Run as regular user, sudo will be requested when needed."
+# Check sudo access
+check_sudo() {
+    print_info "This installation requires sudo access to install the system service"
+    if ! sudo -v; then
+        print_error "sudo access required for service installation"
         exit 1
     fi
-    print_info "✓ Running as regular user"
+    print_info "✓ sudo access confirmed"
 }
 
 # Create installation directory
@@ -107,16 +108,6 @@ detect_platform() {
 
 # Download precompiled binary
 download_binary() {
-    local current_dir=$(pwd)
-    
-    # Check if we're in the project directory (has go.mod) - for development
-    if [[ -f "go.mod" ]]; then
-        print_info "Development mode: Building from source..."
-        go build -o "$INSTALL_DIR/$BINARY_NAME" ./cmd
-        print_success "✓ Built from source"
-        return
-    fi
-    
     print_info "Downloading latest release from GitHub..."
     
     # Get latest release info
@@ -124,9 +115,7 @@ download_binary() {
     release_info=$(curl -sSL "$API_URL/releases/latest")
     if [ $? -ne 0 ]; then
         print_error "Failed to fetch release information"
-        print_info "Falling back to source code compilation..."
-        download_and_build_source
-        return
+        exit 1
     fi
     
     # Extract download URL
@@ -134,10 +123,8 @@ download_binary() {
     download_url=$(echo "$release_info" | grep -o "\"browser_download_url\":\s*\"[^\"]*${BINARY_NAME_PLATFORM}\"" | cut -d'"' -f4)
     
     if [[ -z "$download_url" ]]; then
-        print_warning "No precompiled binary found for ${PLATFORM}-${ARCH}"
-        print_info "Falling back to source code compilation..."
-        download_and_build_source
-        return
+        print_error "No precompiled binary found for ${PLATFORM}-${ARCH}"
+        exit 1
     fi
     
     # Download binary
@@ -146,9 +133,7 @@ download_binary() {
     
     if ! curl -sSL -o "$temp_binary" "$download_url"; then
         print_error "Failed to download binary"
-        print_info "Falling back to source code compilation..."
-        download_and_build_source
-        return
+        exit 1
     fi
     
     # Move to final location
@@ -158,42 +143,6 @@ download_binary() {
     print_success "✓ Downloaded precompiled binary"
 }
 
-# Fallback: download source and build
-download_and_build_source() {
-    print_info "Downloading source code from GitHub..."
-    
-    # Check if Go is installed
-    if ! command -v go >/dev/null 2>&1; then
-        print_error "Go is not installed and no precompiled binary is available"
-        print_error "Please install Go or contact the maintainer for a precompiled binary for your platform"
-        exit 1
-    fi
-    
-    local current_dir=$(pwd)
-    local temp_dir=$(mktemp -d)
-    cd "$temp_dir"
-    
-    # Download and extract source code
-    if ! curl -sSL "https://github.com/wesleywu/smart-route/archive/main.tar.gz" | tar -xz; then
-        print_error "Failed to download source code"
-        exit 1
-    fi
-    
-    cd smart-route-main
-    
-    # Build binary
-    print_info "Building from source..."
-    if ! go build -o "$INSTALL_DIR/$BINARY_NAME" ./cmd; then
-        print_error "Failed to build from source"
-        exit 1
-    fi
-    
-    # Cleanup
-    cd "$current_dir"
-    rm -rf "$temp_dir"
-    
-    print_success "✓ Built from source code"
-}
 
 # Check and add to PATH
 setup_path() {
@@ -347,20 +296,13 @@ main() {
     print_info "Starting installation..."
     
     check_macos
-    check_not_root
+    check_sudo
     detect_platform
     create_install_dir
     download_binary
     setup_path
     
-    echo
-    read -p "Install system service (auto-start on boot)? [Y/n]: " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
-        print_info "Skipping service installation"
-    else
-        install_service
-    fi
+    install_service
     
     verify_installation
     print_usage

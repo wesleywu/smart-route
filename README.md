@@ -52,11 +52,11 @@ Smart Route Manager 通过以下方式工作：
 
 #### macOS / Linux
 ```bash
-# 直接从GitHub获取并执行安装脚本
-curl -sSL https://raw.githubusercontent.com/wesleywu/smart-route/main/scripts/install.sh | bash
+# 直接从GitHub获取并执行安装脚本（需要sudo权限安装系统服务）
+curl -sSL https://raw.githubusercontent.com/wesleywu/smart-route/main/scripts/install.sh | sudo bash
 
 # 或者使用wget
-wget -qO- https://raw.githubusercontent.com/wesleywu/smart-route/main/scripts/install.sh | bash
+wget -qO- https://raw.githubusercontent.com/wesleywu/smart-route/main/scripts/install.sh | sudo bash
 ```
 
 #### Windows (PowerShell)
