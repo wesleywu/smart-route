@@ -169,20 +169,21 @@ func runDaemon(_ *cobra.Command, _ []string) {
 }
 
 func installService(_ *cobra.Command, _ []string) {
+	// Check root privileges
+	if os.Getuid() != 0 {
+		fmt.Fprintf(os.Stderr, "Error: install command requires root privileges\n")
+		fmt.Printf("Please run: sudo smartroute install\n")
+		os.Exit(1)
+	}
+
 	currentExecPath, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to get executable path: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Install to user's local bin directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to get home directory: %v\n", err)
-		os.Exit(1)
-	}
-
-	installDir := filepath.Join(homeDir, ".local", "bin")
+	// Install to system-wide bin directory
+	installDir := "/usr/local/bin"
 	targetPath := filepath.Join(installDir, "smartroute")
 
 	// Create install directory if it doesn't exist
@@ -209,8 +210,8 @@ func installService(_ *cobra.Command, _ []string) {
 		fmt.Printf("Binary already in target location\n")
 	}
 
-	// Install system service (requires root)
-	fmt.Printf("Installing system service (requires sudo)...\n")
+	// Install system service
+	fmt.Printf("Installing system service...\n")
 	service := daemon.NewPlatformService(targetPath, "")
 	if err := service.Install(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to install service: %v\n", err)
@@ -220,56 +221,39 @@ func installService(_ *cobra.Command, _ []string) {
 }
 
 func uninstallService(_ *cobra.Command, _ []string) {
-	// Try to uninstall system service
+	// Check root privileges
+	if os.Getuid() != 0 {
+		fmt.Fprintf(os.Stderr, "Error: uninstall command requires root privileges\n")
+		fmt.Printf("Please run: sudo smartroute uninstall\n")
+		os.Exit(1)
+	}
+
+	// Uninstall system service
 	fmt.Printf("Uninstalling system service...\n")
 	service := daemon.NewPlatformService("", "")
 	if err := service.Uninstall(); err != nil {
-		if os.Getuid() != 0 {
-			fmt.Printf("⚠️  Service uninstall requires sudo privileges\n")
-			fmt.Printf("Run with: sudo smartroute uninstall\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Failed to uninstall service: %v\n", err)
-		}
+		fmt.Fprintf(os.Stderr, "Failed to uninstall service: %v\n", err)
+		// Continue with binary removal even if service uninstall fails
 	} else {
 		fmt.Printf("✓ System service uninstalled\n")
 	}
 
-	// Remove binary file
-	currentExecPath, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not get executable path: %v\n", err)
-		fmt.Println("Please manually remove the binary file if needed")
-		return
-	}
-
-	// Check if binary is in user's local bin directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not get home directory: %v\n", err)
-		fmt.Println("Please manually remove the binary file if needed")
-		return
-	}
-
-	localBinPath := filepath.Join(homeDir, ".local", "bin", "smartroute")
+	// Remove binary file from system-wide location
+	systemBinPath := "/usr/local/bin/smartroute"
 	
-	// Only remove if it's in the standard install location
-	if currentExecPath == localBinPath {
-		fmt.Printf("Removing binary file: %s\n", currentExecPath)
-		if err := os.Remove(currentExecPath); err != nil {
+	if _, err := os.Stat(systemBinPath); err == nil {
+		fmt.Printf("Removing binary file: %s\n", systemBinPath)
+		if err := os.Remove(systemBinPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Failed to remove binary: %v\n", err)
-			fmt.Printf("Please manually remove: %s\n", currentExecPath)
+			fmt.Printf("Please manually remove: %s\n", systemBinPath)
 		} else {
 			fmt.Printf("✓ Binary file removed\n")
 		}
 	} else {
-		fmt.Printf("Binary file not in standard location, skipping removal\n")
-		fmt.Printf("Current location: %s\n", currentExecPath)
-		fmt.Printf("You may manually remove it if needed\n")
+		fmt.Printf("Binary file not found at %s\n", systemBinPath)
 	}
 
 	fmt.Printf("\n🗑️  Smart Route Manager uninstalled successfully!\n")
-	fmt.Printf("\nNote: You may need to restart your terminal or run:\n")
-	fmt.Printf("  source ~/.$(basename \"$SHELL\")rc\n")
 }
 
 func showStatus(_ *cobra.Command, _ []string) {
