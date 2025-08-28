@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wesleywu/smart-route/internal/logger"
+	"github.com/wesleywu/smart-route/internal/routing/batch"
 	"github.com/wesleywu/smart-route/internal/routing/entities"
 	"github.com/wesleywu/smart-route/internal/routing/metrics"
 	"github.com/wesleywu/smart-route/internal/utils"
@@ -41,11 +42,11 @@ func (rm *LinuxRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log
 }
 
 func (rm *LinuxRouteManager) BatchAddRoutes(routes []*entities.Route, log *logger.Logger) error {
-	return rm.batchOperation(routes, entities.RouteActionAdd, log)
+	return batch.Process(routes, rm.AddRoute, rm.concurrencyLimit, log)
 }
 
 func (rm *LinuxRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *logger.Logger) error {
-	return rm.batchOperation(routes, entities.RouteActionDelete, log)
+	return batch.Process(routes, rm.DeleteRoute, rm.concurrencyLimit, log)
 }
 
 // GetPhysicalGateway gets the underlying physical network gateway (for route management)
@@ -164,47 +165,6 @@ func (rm *LinuxRouteManager) deleteRouteDirect(network *net.IPNet, gateway net.I
 			}
 		}
 		return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
-	}
-
-	return nil
-}
-
-func (rm *LinuxRouteManager) batchOperation(routes []*entities.Route, action entities.RouteAction, log *logger.Logger) error {
-	semaphore := make(chan struct{}, rm.concurrencyLimit)
-	var wg sync.WaitGroup
-	errChan := make(chan error, len(routes))
-
-	for _, route := range routes {
-		wg.Add(1)
-		go func(r *entities.Route) {
-			defer wg.Done()
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			var err error
-			switch action {
-			case entities.RouteActionAdd:
-				err = rm.AddRoute(&r.Destination, r.Gateway, log)
-			case entities.RouteActionDelete:
-				err = rm.DeleteRoute(&r.Destination, r.Gateway, log)
-			}
-
-			if err != nil {
-				errChan <- err
-			}
-		}(route)
-	}
-
-	wg.Wait()
-	close(errChan)
-
-	var errors []error
-	for err := range errChan {
-		errors = append(errors, err)
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("batch operation failed: %d errors", len(errors))
 	}
 
 	return nil

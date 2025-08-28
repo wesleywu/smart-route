@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wesleywu/smart-route/internal/logger"
+	"github.com/wesleywu/smart-route/internal/routing/batch"
 	"github.com/wesleywu/smart-route/internal/routing/entities"
 	"github.com/wesleywu/smart-route/internal/routing/metrics"
 	"github.com/wesleywu/smart-route/internal/utils"
@@ -56,12 +57,12 @@ func (rm *BSDRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log *
 
 // BatchAddRoutes adds multiple routes to the system
 func (rm *BSDRouteManager) BatchAddRoutes(routes []*entities.Route, log *logger.Logger) error {
-	return rm.batchOperation(routes, entities.RouteActionAdd, log)
+	return batch.Process(routes, rm.AddRoute, rm.concurrencyLimit, log)
 }
 
 // BatchDeleteRoutes deletes multiple routes from the system
 func (rm *BSDRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *logger.Logger) error {
-	return rm.batchOperation(routes, entities.RouteActionDelete, log)
+	return batch.Process(routes, rm.DeleteRoute, rm.concurrencyLimit, log)
 }
 
 // GetPhysicalGateway gets the physical gateway from the system (for route management)
@@ -194,47 +195,6 @@ func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.
 
 	rm.metrics.RecordOperation(time.Since(start), false)
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
-}
-
-func (rm *BSDRouteManager) batchOperation(routes []*entities.Route, action entities.RouteAction, log *logger.Logger) error {
-	semaphore := make(chan struct{}, rm.concurrencyLimit)
-	var wg sync.WaitGroup
-	errChan := make(chan error, len(routes))
-
-	for _, route := range routes {
-		wg.Add(1)
-		go func(r *entities.Route) {
-			defer wg.Done()
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			var err error
-			switch action {
-			case entities.RouteActionAdd:
-				err = rm.AddRoute(&r.Destination, r.Gateway, log)
-			case entities.RouteActionDelete:
-				err = rm.DeleteRoute(&r.Destination, r.Gateway, log)
-			}
-
-			if err != nil {
-				errChan <- err
-			}
-		}(route)
-	}
-
-	wg.Wait()
-	close(errChan)
-
-	var errors []error
-	for err := range errChan {
-		errors = append(errors, err)
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("batch operation failed: %d errors", len(errors))
-	}
-
-	return nil
 }
 
 // parseNetstatOutputBSD parses the output of netstat -rn for BSD systems
