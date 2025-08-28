@@ -42,11 +42,11 @@ func (rm *LinuxRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log
 }
 
 func (rm *LinuxRouteManager) BatchAddRoutes(routes []*entities.Route, log *logger.Logger) error {
-	return batch.Process(routes, rm.AddRoute, rm.concurrencyLimit, log)
+	return batch.ProcessUsingAnts(routes, rm.AddRoute, rm.concurrencyLimit, log)
 }
 
 func (rm *LinuxRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *logger.Logger) error {
-	return batch.Process(routes, rm.DeleteRoute, rm.concurrencyLimit, log)
+	return batch.ProcessUsingAnts(routes, rm.DeleteRoute, rm.concurrencyLimit, log)
 }
 
 // GetPhysicalGateway gets the underlying physical network gateway (for route management)

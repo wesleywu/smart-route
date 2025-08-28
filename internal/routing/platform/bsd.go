@@ -57,12 +57,12 @@ func (rm *BSDRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log *
 
 // BatchAddRoutes adds multiple routes to the system
 func (rm *BSDRouteManager) BatchAddRoutes(routes []*entities.Route, log *logger.Logger) error {
-	return batch.Process(routes, rm.AddRoute, rm.concurrencyLimit, log)
+	return batch.ProcessUsingAnts(routes, rm.AddRoute, rm.concurrencyLimit, log)
 }
 
 // BatchDeleteRoutes deletes multiple routes from the system
 func (rm *BSDRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *logger.Logger) error {
-	return batch.Process(routes, rm.DeleteRoute, rm.concurrencyLimit, log)
+	return batch.ProcessUsingAnts(routes, rm.DeleteRoute, rm.concurrencyLimit, log)
 }
 
 // GetPhysicalGateway gets the physical gateway from the system (for route management)

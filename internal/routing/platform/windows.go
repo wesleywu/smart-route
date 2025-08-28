@@ -42,11 +42,11 @@ func (rm *WindowsRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, l
 }
 
 func (rm *WindowsRouteManager) BatchAddRoutes(routes []*entities.Route, log *logger.Logger) error {
-	return batch.Process(routes, rm.AddRoute, rm.concurrencyLimit, log)
+	return batch.ProcessUsingAnts(routes, rm.AddRoute, rm.concurrencyLimit, log)
 }
 
 func (rm *WindowsRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *logger.Logger) error {
-	return batch.Process(routes, rm.DeleteRoute, rm.concurrencyLimit, log)
+	return batch.ProcessUsingAnts(routes, rm.DeleteRoute, rm.concurrencyLimit, log)
 }
 
 // GetPhysicalGateway gets the underlying physical network gateway (for route management)
