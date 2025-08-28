@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Smart Route Manager Installation Script for macOS
-# This script installs smartroute to $HOME/.local/bin and sets up the system service
+# This script installs smartroute to /usr/local/bin and sets up the system service
 #
 
 set -e
