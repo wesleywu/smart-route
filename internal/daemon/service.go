@@ -108,7 +108,7 @@ func (sm *ServiceManager) Start() error {
 	sm.currentGW = gw
 	sm.currentIface = iface
 
-	if err := sm.setupInitialRoutes(); err != nil {
+	if err := sm.routeSwitch.InitRoutes(); err != nil {
 		return fmt.Errorf("failed to setup initial routes: %w", err)
 	}
 
@@ -241,7 +241,7 @@ func (sm *ServiceManager) handleNetworkEvent(event routing.NetworkEvent) {
 		// This is a backup mechanism in case gateway change detection is not perfect
 		go func() {
 			time.Sleep(500 * time.Millisecond) // Allow network to stabilize
-			sm.checkAndHandleGatewayChange()
+			sm.checkAndHandlePhysicalGatewayChange()
 		}()
 	}
 }
@@ -313,58 +313,8 @@ func (sm *ServiceManager) handleVPNDisconnection() error {
 	return nil
 }
 
-// setupInitialRoutes sets up initial routes only if VPN is already connected
-func (sm *ServiceManager) setupInitialRoutes() error {
-	// Check current VPN state - only setup routes if VPN is connected
-	currentGW, currentIface, err := sm.router.GetSystemDefaultRoute()
-	if err != nil {
-		sm.logger.Error("failed to check VPN state during initial setup", "error", err)
-		return fmt.Errorf("failed to check VPN state: %w", err)
-	}
-
-	// Check if VPN is connected by examining the interface
-	isVPNConnected := sm.isVPNInterface(currentIface)
-	
-	if !isVPNConnected {
-		sm.logger.Info("VPN not connected - skipping route setup",
-			"current_interface", currentIface,
-			"current_gateway", currentGW.String())
-		return nil
-	}
-
-	sm.logger.Info("VPN detected - setting up routes",
-		"vpn_interface", currentIface,
-		"physical_gateway", sm.currentGW.String())
-
-	// VPN is connected, use physical gateway for route setup
-	return sm.routeSwitch.SetupRoutes(sm.currentGW)
-}
-
-// isVPNInterface checks if the given interface name is a VPN interface
-func (sm *ServiceManager) isVPNInterface(interfaceName string) bool {
-	// Common VPN interface patterns
-	if len(interfaceName) >= 4 {
-		prefix := interfaceName[:4]
-		switch prefix {
-		case "utun", "tun0", "tap0":
-			return true
-		}
-	}
-
-	// Check for other common VPN interface patterns
-	if len(interfaceName) >= 3 {
-		prefix := interfaceName[:3]
-		switch prefix {
-		case "tun", "tap", "ppp":
-			return true
-		}
-	}
-
-	return false
-}
-
-// checkAndHandleGatewayChange checks and handles gateway changes
-func (sm *ServiceManager) checkAndHandleGatewayChange() {
+// checkAndHandlePhysicalGatewayChange checks and handles physical gateway changes
+func (sm *ServiceManager) checkAndHandlePhysicalGatewayChange() {
 	sm.mutex.Lock()
 	now := time.Now()
 	// Prevent too frequent checks (minimum 2 seconds between checks)

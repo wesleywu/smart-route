@@ -8,6 +8,7 @@ import (
 	"github.com/wesleywu/smart-route/internal/config"
 	"github.com/wesleywu/smart-route/internal/logger"
 	"github.com/wesleywu/smart-route/internal/routing/entities"
+	"github.com/wesleywu/smart-route/internal/utils"
 )
 
 // RouteSwitch handles the complete route switching logic used by both one-time and daemon modes
@@ -27,6 +28,38 @@ func NewRouteSwitch(rm entities.RouteManager, chnRoutes *config.IPSet, chnDNS *c
 		managedRoutes: managedRouteSet,
 		logger:        logger,
 	}, nil
+}
+
+// InitRoutes sets up initial routes only if VPN is already connected, or clean up routes if VPN is not connected
+func (rs *RouteSwitch) InitRoutes() error {
+
+	// Check current VPN state - only setup routes if VPN is connected
+	currentGW, currentIface, err := rs.rm.GetSystemDefaultRoute()
+	if err != nil {
+		rs.logger.Error("failed to check VPN state during initial setup", "error", err)
+		return fmt.Errorf("failed to check VPN state: %w", err)
+	}
+
+	// Check if VPN is connected by examining the interface
+	isVPNConnected := utils.IsVPNInterface(currentIface)
+	
+	if !isVPNConnected {
+		rs.logger.Info("VPN not connected - skipping route setup",
+			"current_interface", currentIface,
+			"current_gateway", currentGW.String())
+		return rs.CleanRoutes()
+	}
+
+	rs.logger.Info("VPN detected - setting up routes",
+		"vpn_interface", currentIface,
+		"physical_gateway", currentGW.String())
+
+	// VPN is connected, use physical gateway for route setup
+	physicalGateway, _, err := rs.rm.GetPhysicalGateway()
+	if err != nil {
+		return fmt.Errorf("failed to get physical gateway: %w", err)
+	}
+	return rs.SetupRoutes(physicalGateway)
 }
 
 // SetupRoutes performs complete route reset - used by both one-time and daemon modes

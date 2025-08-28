@@ -106,21 +106,6 @@ func runOnce(_ *cobra.Command, _ []string) {
 	log := logger.New(logLevel)
 	log.Info("Route setup started", "version", version)
 
-	rm, err := routing.NewPlatformRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
-	if err != nil {
-		log.Error("Failed to create route manager", "error", err)
-		os.Exit(1)
-	}
-	defer rm.Close()
-
-	gateway, iface, err := rm.GetPhysicalGateway()
-	if err != nil {
-		log.Error("Failed to get default gateway", "error", err)
-		os.Exit(1)
-	}
-
-	log.Info("Default gateway detected", "gateway", gateway.String(), "interface", iface)
-
 	chnRoutes, err := config.LoadChnRoutesWithFallback(routeFile)
 	if err != nil {
 		log.Error("Failed to load Chinese routes", "error", err)
@@ -135,20 +120,23 @@ func runOnce(_ *cobra.Command, _ []string) {
 
 	log.Info("Configuration loaded", "routes", chnRoutes.Size(), "dns_servers", chnDNS.Size())
 
-	// Create unified route switch handler
+	// Create platform specific route manager
+	rm, err := routing.NewPlatformRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
+	if err != nil {
+		log.Error("Failed to create route manager", "error", err)
+		os.Exit(1)
+	}
+	defer rm.Close()
+
+	// Create unified route switch handler, which handles the complete route switching logic
 	routeSwitch, err := routing.NewRouteSwitch(rm, chnRoutes, chnDNS, log)
 	if err != nil {
 		log.Error("Failed to create route switch", "error", err)
 		os.Exit(1)
 	}
 
-	// One-time mode: Always perform complete route reset
-	// This ensures consistent behavior and clean state for every run
-	log.Info("Route reset started",
-		"gateway", gateway.String(), "interface", iface)
-
-	// Always use the unified logic: cleanup all managed routes, then setup for current gateway
-	if err := routeSwitch.SetupRoutes(gateway); err != nil {
+	// Always use the unified logic: setup routes only if VPN is connected, or clean up routes if VPN is not connected
+	if err := routeSwitch.InitRoutes(); err != nil {
 		log.Error("Failed to setup routes", "error", err)
 		os.Exit(1)
 	}
@@ -156,7 +144,7 @@ func runOnce(_ *cobra.Command, _ []string) {
 	log.Info("Route setup completed")
 }
 
-func runDaemon(cmd *cobra.Command, args []string) {
+func runDaemon(_ *cobra.Command, _ []string) {
 	// Determine log level based on command line flags
 	logLevel := "info"
 	if verboseMode {

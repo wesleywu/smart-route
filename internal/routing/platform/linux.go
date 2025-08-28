@@ -13,6 +13,7 @@ import (
 	"github.com/wesleywu/smart-route/internal/logger"
 	"github.com/wesleywu/smart-route/internal/routing/entities"
 	"github.com/wesleywu/smart-route/internal/routing/metrics"
+	"github.com/wesleywu/smart-route/internal/utils"
 )
 
 type LinuxRouteManager struct {
@@ -49,25 +50,9 @@ func (rm *LinuxRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *lo
 
 // GetPhysicalGateway gets the underlying physical network gateway (for route management)
 func (rm *LinuxRouteManager) GetPhysicalGateway() (net.IP, string, error) {
-	// For Linux, we need special logic to find the physical gateway
-	// This is more complex than the current default route since VPN might override it
-
-	// For now, use a simplified implementation - in a real scenario,
-	// this would need to parse all routes and find the physical interface
-	cmd := exec.Command("ip", "route", "show", "default")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to get default route: %w", err)
-	}
-
-	// Parse to find non-VPN interface
-	gateway, iface, err := rm.parseDefaultRouteLinux(string(output))
-	if err != nil {
-		return nil, "", err
-	}
-
-	// TODO: Add logic to detect if this is a VPN interface and find the physical one
-	return gateway, iface, nil
+	// ALWAYS look for physical interface gateway, never rely on default route
+	// In VPN scenarios, default route will point to VPN, but we need the physical gateway
+	return utils.GetPhysicalGateway()
 }
 
 // GetSystemDefaultRoute gets the current default route (including VPN) from the system
@@ -89,7 +74,7 @@ func (rm *LinuxRouteManager) ListSystemRoutes() ([]*entities.Route, error) {
 		return nil, fmt.Errorf("failed to list routes: %w", err)
 	}
 
-	return parseNetstatOutput(string(output))
+	return parseNetstatOutputLinux(string(output))
 }
 
 func (rm *LinuxRouteManager) Close() error {
@@ -248,4 +233,81 @@ func (rm *LinuxRouteManager) parseDefaultRouteLinux(output string) (net.IP, stri
 	}
 
 	return nil, "", fmt.Errorf("no default gateway found")
+}
+
+// parseNetstatOutputLinux parses the output of netstat -rn for Linux systems
+func parseNetstatOutputLinux(output string) ([]*entities.Route, error) {
+	var routes []*entities.Route
+	lines := strings.Split(output, "\n")
+
+	// Skip header lines and find the start of routing table
+	start := -1
+	for i, line := range lines {
+		if strings.Contains(line, "Destination") && strings.Contains(line, "Gateway") {
+			start = i + 1
+			break
+		}
+	}
+
+	if start == -1 {
+		// Try alternative header format
+		for i, line := range lines {
+			if strings.Contains(line, "Internet:") {
+				start = i + 2 // Skip "Internet:" and the header line
+				break
+			}
+		}
+	}
+
+	if start == -1 {
+		return routes, nil // No routing table found
+	}
+
+	for i := start; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+
+		// Skip non-route lines (like "Internet6:" section)
+		if strings.Contains(line, ":") && !strings.Contains(line, ".") {
+			break
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+
+		destination := fields[0]
+		gateway := fields[1]
+
+		// Parse fields based on standard netstat format:
+		// Destination Gateway Flags Netif [Expire]
+		// Skip if no gateway
+		if gateway == "" || gateway == "-" {
+			continue
+		}
+
+		// Parse destination network
+		network, err := utils.ParseDestination(destination)
+		if err != nil {
+			continue // Skip unparseable destinations
+		}
+
+		// Parse gateway IP
+		gwIP := net.ParseIP(gateway)
+		if gwIP == nil {
+			continue // Skip unparseable gateways (like link# formats)
+		}
+
+		route := &entities.Route{
+			Destination: *network,
+			Gateway:     gwIP,
+		}
+
+		routes = append(routes, route)
+	}
+
+	return routes, nil
 }

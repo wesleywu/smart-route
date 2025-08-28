@@ -5,137 +5,139 @@ package platform
 import (
 	"net"
 	"testing"
+
+	"github.com/wesleywu/smart-route/internal/utils"
 )
 
 // Test parsing of BSD netstat simplified format destinations
 func TestParseDestination_SimplifiedNetworkFormats(t *testing.T) {
 	testCases := []struct {
-		name           string
-		input          string
-		expectedIP     string
-		expectedMask   string
-		expectedCIDR   string
-		shouldSucceed  bool
+		name          string
+		input         string
+		expectedIP    string
+		expectedMask  string
+		expectedCIDR  string
+		shouldSucceed bool
 	}{
 		// Real examples from your system
 		{
-			name:         "203.57.66 simplified format",
-			input:        "203.57.66",
-			expectedIP:   "203.57.66.0",
-			expectedMask: "ffffff00",
-			expectedCIDR: "203.57.66.0/24",
+			name:          "203.57.66 simplified format",
+			input:         "203.57.66",
+			expectedIP:    "203.57.66.0",
+			expectedMask:  "ffffff00",
+			expectedCIDR:  "203.57.66.0/24",
 			shouldSucceed: true,
 		},
 		{
-			name:         "203.57.69 simplified format",
-			input:        "203.57.69",
-			expectedIP:   "203.57.69.0",
-			expectedMask: "ffffff00",
-			expectedCIDR: "203.57.69.0/24",
+			name:          "203.57.69 simplified format",
+			input:         "203.57.69",
+			expectedIP:    "203.57.69.0",
+			expectedMask:  "ffffff00",
+			expectedCIDR:  "203.57.69.0/24",
 			shouldSucceed: true,
 		},
 		{
-			name:         "203.57.73 simplified format",
-			input:        "203.57.73",
-			expectedIP:   "203.57.73.0",
-			expectedMask: "ffffff00",
-			expectedCIDR: "203.57.73.0/24",
+			name:          "203.57.73 simplified format",
+			input:         "203.57.73",
+			expectedIP:    "203.57.73.0",
+			expectedMask:  "ffffff00",
+			expectedCIDR:  "203.57.73.0/24",
 			shouldSucceed: true,
 		},
 		{
-			name:         "203.57.90 simplified format",
-			input:        "203.57.90",
-			expectedIP:   "203.57.90.0",
-			expectedMask: "ffffff00",
-			expectedCIDR: "203.57.90.0/24",
+			name:          "203.57.90 simplified format",
+			input:         "203.57.90",
+			expectedIP:    "203.57.90.0",
+			expectedMask:  "ffffff00",
+			expectedCIDR:  "203.57.90.0/24",
 			shouldSucceed: true,
 		},
 		{
-			name:         "203.57.101 simplified format",
-			input:        "203.57.101",
-			expectedIP:   "203.57.101.0",
-			expectedMask: "ffffff00",
-			expectedCIDR: "203.57.101.0/24",
+			name:          "203.57.101 simplified format",
+			input:         "203.57.101",
+			expectedIP:    "203.57.101.0",
+			expectedMask:  "ffffff00",
+			expectedCIDR:  "203.57.101.0/24",
 			shouldSucceed: true,
 		},
 		// Additional test cases for different formats
 		{
-			name:         "Two octet network (10.0)",
-			input:        "10.0",
-			expectedIP:   "10.0.0.0",
-			expectedMask: "ffff0000",
-			expectedCIDR: "10.0.0.0/16",
+			name:          "Two octet network (10.0)",
+			input:         "10.0",
+			expectedIP:    "10.0.0.0",
+			expectedMask:  "ffff0000",
+			expectedCIDR:  "10.0.0.0/16",
 			shouldSucceed: true,
 		},
 		{
-			name:         "Complete IP address",
-			input:        "192.168.1.100",
-			expectedIP:   "192.168.1.100",
-			expectedMask: "ffffffff",
-			expectedCIDR: "192.168.1.100/32",
+			name:          "Complete IP address",
+			input:         "192.168.1.100",
+			expectedIP:    "192.168.1.100",
+			expectedMask:  "ffffffff",
+			expectedCIDR:  "192.168.1.100/32",
 			shouldSucceed: true,
 		},
 		{
-			name:         "Default route",
-			input:        "default",
-			expectedIP:   "0.0.0.0",
-			expectedMask: "00000000",
-			expectedCIDR: "0.0.0.0/0",
+			name:          "Default route",
+			input:         "default",
+			expectedIP:    "0.0.0.0",
+			expectedMask:  "00000000",
+			expectedCIDR:  "0.0.0.0/0",
 			shouldSucceed: true,
 		},
 		{
-			name:         "Complete CIDR notation",
-			input:        "192.168.1.0/24",
-			expectedIP:   "192.168.1.0",
-			expectedMask: "ffffff00",
-			expectedCIDR: "192.168.1.0/24",
+			name:          "Complete CIDR notation",
+			input:         "192.168.1.0/24",
+			expectedIP:    "192.168.1.0",
+			expectedMask:  "ffffff00",
+			expectedCIDR:  "192.168.1.0/24",
 			shouldSucceed: true,
 		},
 		// Edge cases
 		{
-			name:         "Single number (invalid)",
-			input:        "203",
-			expectedCIDR: "",
+			name:          "Single number (invalid)",
+			input:         "203",
+			expectedCIDR:  "",
 			shouldSucceed: false,
 		},
 		{
-			name:         "Empty string (invalid)",
-			input:        "",
-			expectedCIDR: "",
+			name:          "Empty string (invalid)",
+			input:         "",
+			expectedCIDR:  "",
 			shouldSucceed: false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := parseDestination(tc.input)
-			
+			result, err := utils.ParseDestination(tc.input)
+
 			if tc.shouldSucceed {
 				if err != nil {
 					t.Errorf("Expected success but got error: %v", err)
 					return
 				}
-				
+
 				if result == nil {
 					t.Errorf("Expected result but got nil")
 					return
 				}
-				
+
 				// Check IP
 				if result.IP.String() != tc.expectedIP {
 					t.Errorf("Expected IP %s, got %s", tc.expectedIP, result.IP.String())
 				}
-				
+
 				// Check mask
 				if result.Mask.String() != tc.expectedMask {
 					t.Errorf("Expected mask %s, got %s", tc.expectedMask, result.Mask.String())
 				}
-				
+
 				// Check CIDR representation
 				if result.String() != tc.expectedCIDR {
 					t.Errorf("Expected CIDR %s, got %s", tc.expectedCIDR, result.String())
 				}
-				
+
 				t.Logf("✅ Correctly parsed '%s' -> %s", tc.input, result.String())
 			} else {
 				if err == nil {
@@ -166,7 +168,7 @@ default            192.168.32.1       UGScIg                en0
 192.168.1.100      192.168.32.1       UGHS                  en0       
 `
 
-	routes, err := parseNetstatOutput(netstatOutput)
+	routes, err := parseNetstatOutputBSD(netstatOutput)
 	if err != nil {
 		t.Fatalf("Failed to parse netstat output: %v", err)
 	}
@@ -196,7 +198,7 @@ default            192.168.32.1       UGScIg                en0
 			if gateway == expectedGateway {
 				t.Logf("✅ Found expected route: %s -> %s", expectedNetwork, gateway)
 			} else {
-				t.Errorf("❌ Route %s found but with wrong gateway: expected %s, got %s", 
+				t.Errorf("❌ Route %s found but with wrong gateway: expected %s, got %s",
 					expectedNetwork, expectedGateway, gateway)
 			}
 		} else {
@@ -215,7 +217,7 @@ default            192.168.32.1       UGScIg                en0
 func BenchmarkParseDestination_SimplifiedFormats(b *testing.B) {
 	testInputs := []string{
 		"203.57.66",
-		"203.57.69", 
+		"203.57.69",
 		"203.57.73",
 		"203.57.90",
 		"203.57.101",
@@ -228,7 +230,7 @@ func BenchmarkParseDestination_SimplifiedFormats(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, input := range testInputs {
-			_, _ = parseDestination(input)
+			_, _ = utils.ParseDestination(input)
 		}
 	}
 }
@@ -238,8 +240,8 @@ func TestRoutesMatch_WithSimplifiedFormats(t *testing.T) {
 	// Test matching between config file networks and parsed netstat networks
 	testCases := []struct {
 		name           string
-		configNetwork  string  // From chnroute.txt
-		netstatNetwork string  // From parsed netstat (simplified format)
+		configNetwork  string // From chnroute.txt
+		netstatNetwork string // From parsed netstat (simplified format)
 		shouldMatch    bool
 	}{
 		{
@@ -269,22 +271,22 @@ func TestRoutesMatch_WithSimplifiedFormats(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to parse config network %s: %v", tc.configNetwork, err)
 			}
-			
+
 			_, netstatNet, err := net.ParseCIDR(tc.netstatNetwork)
 			if err != nil {
 				t.Fatalf("Failed to parse netstat network %s: %v", tc.netstatNetwork, err)
 			}
 
 			// Use local network comparison logic
-			matches := configNet.IP.Equal(netstatNet.IP) && 
-					   len(configNet.Mask) == len(netstatNet.Mask) &&
-					   configNet.Mask.String() == netstatNet.Mask.String()
-			
+			matches := configNet.IP.Equal(netstatNet.IP) &&
+				len(configNet.Mask) == len(netstatNet.Mask) &&
+				configNet.Mask.String() == netstatNet.Mask.String()
+
 			if matches != tc.shouldMatch {
-				t.Errorf("Expected match=%t for %s vs %s, but got %t", 
+				t.Errorf("Expected match=%t for %s vs %s, but got %t",
 					tc.shouldMatch, tc.configNetwork, tc.netstatNetwork, matches)
 			} else {
-				t.Logf("✅ Correct match result for %s vs %s: %t", 
+				t.Logf("✅ Correct match result for %s vs %s: %t",
 					tc.configNetwork, tc.netstatNetwork, matches)
 			}
 		})

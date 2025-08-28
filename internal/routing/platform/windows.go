@@ -66,15 +66,34 @@ func (rm *WindowsRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 	return rm.parseDefaultRouteWindows(string(output))
 }
 
-// ListSystemRoutes gets all routes from the system routing table
+// ListSystemRoutes gets all routes from the system routing table by `netstat -rn`
+// 
+// IPv4 Route Table
+// ===========================================================================
+// Active Routes:
+// Network Destination        Netmask          Gateway       Interface  Metric
+//           0.0.0.0          0.0.0.0      10.211.55.1      10.211.55.9     15
+//       10.211.55.0    255.255.255.0         On-link       10.211.55.9    271
+//       10.211.55.9  255.255.255.255         On-link       10.211.55.9    271
+//     10.211.55.255  255.255.255.255         On-link       10.211.55.9    271
+//         127.0.0.0        255.0.0.0         On-link         127.0.0.1    331
+//         127.0.0.1  255.255.255.255         On-link         127.0.0.1    331
+//   127.255.255.255  255.255.255.255         On-link         127.0.0.1    331
+//         224.0.0.0        240.0.0.0         On-link         127.0.0.1    331
+//         224.0.0.0        240.0.0.0         On-link       10.211.55.9    271
+//   255.255.255.255  255.255.255.255         On-link         127.0.0.1    331
+//   255.255.255.255  255.255.255.255         On-link       10.211.55.9    271
+// ===========================================================================
 func (rm *WindowsRouteManager) ListSystemRoutes() ([]*entities.Route, error) {
 	cmd := exec.Command("netstat", "-rn")
-	output, err := cmd.Output()
+	_, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list routes: %w", err)
 	}
 
-	return parseNetstatOutput(string(output))
+	// TODO: Implement parsing of netstat output
+
+	return nil, nil
 }
 
 func (rm *WindowsRouteManager) FlushRoutes(gateway net.IP) error {
@@ -91,46 +110,6 @@ func (rm *WindowsRouteManager) FlushRoutes(gateway net.IP) error {
 	}
 
 	return rm.BatchDeleteRoutes(routesToDelete, nil)
-}
-
-// CleanupRoutesForNetworks removes all existing routes for the specified networks/IPs
-func (rm *WindowsRouteManager) CleanupRoutesForNetworks(networks []net.IPNet, log *logger.Logger) error {
-	if len(networks) == 0 {
-		return nil
-	}
-
-	// Get all current routes
-	allRoutes, err := rm.ListSystemRoutes()
-	if err != nil {
-		log.Debug("failed to list routes for cleanup", "error", err)
-		// Don't fail - we'll try to delete anyway
-	}
-
-	var routesToDelete []*entities.Route
-
-	// Find existing routes that match our target networks
-	for _, network := range networks {
-		// Check all current routes to see if any match this network
-		for _, route := range allRoutes {
-			if routesMatch(network, route.Destination) {
-				routesToDelete = append(routesToDelete, route)
-				log.Debug("found existing route to cleanup",
-					"network", route.Destination.String(),
-					"gateway", route.Gateway.String())
-			}
-		}
-	}
-
-	// Delete found routes
-	if len(routesToDelete) > 0 {
-		log.Info("Cleaning up existing routes", "count", len(routesToDelete))
-		if err := rm.BatchDeleteRoutes(routesToDelete, log); err != nil {
-			log.Warn("failed to cleanup some routes", "error", err)
-			// Don't return error - some routes might not exist anymore
-		}
-	}
-
-	return nil
 }
 
 func (rm *WindowsRouteManager) Close() error {
