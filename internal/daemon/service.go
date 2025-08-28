@@ -23,10 +23,7 @@ type ServiceManager struct {
 	monitor      *routing.NetworkMonitor
 	router       entities.RouteManager
 	routeSwitch  *routing.RouteSwitch
-	chnRoutes    *config.IPSet
-	chnDNS       *config.DNSServers
-	routeFile    string
-	dnsFile      string
+	managedIPSet        *config.IPSet
 	stopChan     chan os.Signal
 	doneChan     chan struct{}
 	ctx          context.Context
@@ -45,8 +42,6 @@ func NewServiceManager(cfg *config.Config, log *logger.Logger, routeFile, dnsFil
 	sm := &ServiceManager{
 		config:    cfg,
 		logger:    log.WithComponent("service"),
-		routeFile: routeFile,
-		dnsFile:   dnsFile,
 		stopChan:  make(chan os.Signal, 1),
 		doneChan:  make(chan struct{}),
 		ctx:       ctx,
@@ -64,18 +59,12 @@ func NewServiceManager(cfg *config.Config, log *logger.Logger, routeFile, dnsFil
 		return nil, fmt.Errorf("failed to create network monitor: %w", err)
 	}
 
-	sm.chnRoutes, err = config.LoadChnRoutesWithFallback(routeFile)
+	sm.managedIPSet, err = config.LoadManagedIPSetWithFallback(routeFile, dnsFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load Chinese routes: %w", err)
+		return nil, fmt.Errorf("failed to load Chinese routes and DNS: %w", err)
 	}
-
-	sm.chnDNS, err = config.LoadChnDNSWithFallback(dnsFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load Chinese DNS: %w", err)
-	}
-
 	// Initialize route switch with unified logic
-	sm.routeSwitch, err = routing.NewRouteSwitch(sm.router, sm.chnRoutes, sm.chnDNS, sm.logger)
+	sm.routeSwitch, err = routing.NewRouteSwitch(sm.router, sm.managedIPSet, sm.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create route switch: %w", err)
 	}
@@ -99,7 +88,9 @@ func (sm *ServiceManager) Start() error {
 	signal.Notify(sm.stopChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	sm.logger.ServiceStart("1.0.0", fmt.Sprintf("%d", os.Getpid()))
-	sm.logger.ConfigLoaded(sm.routeFile, sm.chnRoutes.Size(), sm.chnDNS.Size())
+	sm.logger.Info("Managed IP set loaded",
+		"managed_ip_set_size", sm.managedIPSet.Size(),
+	)
 
 	gw, iface, err := sm.router.GetPhysicalGateway()
 	if err != nil {
@@ -387,10 +378,9 @@ func (sm *ServiceManager) GetStatus() map[string]interface{} {
 	defer sm.mutex.RUnlock()
 
 	return map[string]interface{}{
-		"running":           sm.isRunning,
-		"current_gateway":   sm.currentGW.String(),
-		"current_interface": sm.currentIface,
-		"chn_routes":        sm.chnRoutes.Size(),
-		"chn_dns":           sm.chnDNS.Size(),
+		"running":             sm.isRunning,
+		"current_gateway":     sm.currentGW.String(),
+		"current_interface":   sm.currentIface,
+		"managed_ip_set_size": sm.managedIPSet.Size(),
 	}
 }

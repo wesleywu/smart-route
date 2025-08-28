@@ -106,19 +106,13 @@ func runOnce(_ *cobra.Command, _ []string) {
 	log := logger.New(logLevel)
 	log.Info("Route setup started", "version", version)
 
-	chnRoutes, err := config.LoadChnRoutesWithFallback(routeFile)
+	ipSet, err := config.LoadManagedIPSetWithFallback(routeFile, dnsFile)
 	if err != nil {
 		log.Error("Failed to load Chinese routes", "error", err)
 		os.Exit(1)
 	}
 
-	chnDNS, err := config.LoadChnDNSWithFallback(dnsFile)
-	if err != nil {
-		log.Error("Failed to load Chinese DNS", "error", err)
-		os.Exit(1)
-	}
-
-	log.Info("Configuration loaded", "routes", chnRoutes.Size(), "dns_servers", chnDNS.Size())
+	log.Info("Configuration loaded", "ip_set_size", ipSet.Size())
 
 	// Create platform specific route manager
 	rm, err := routing.NewPlatformRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
@@ -129,7 +123,7 @@ func runOnce(_ *cobra.Command, _ []string) {
 	defer rm.Close()
 
 	// Create unified route switch handler, which handles the complete route switching logic
-	routeSwitch, err := routing.NewRouteSwitch(rm, chnRoutes, chnDNS, log)
+	routeSwitch, err := routing.NewRouteSwitch(rm, ipSet, log)
 	if err != nil {
 		log.Error("Failed to create route switch", "error", err)
 		os.Exit(1)
@@ -174,7 +168,7 @@ func runDaemon(_ *cobra.Command, _ []string) {
 	}
 }
 
-func installService(cmd *cobra.Command, args []string) {
+func installService(_ *cobra.Command, _ []string) {
 	currentExecPath, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to get executable path: %v\n", err)
@@ -225,7 +219,7 @@ func installService(cmd *cobra.Command, args []string) {
 	fmt.Printf("Service installed successfully (%s)\n", runtime.GOOS)
 }
 
-func uninstallService(cmd *cobra.Command, args []string) {
+func uninstallService(_ *cobra.Command, _ []string) {
 	// Try to uninstall system service
 	fmt.Printf("Uninstalling system service...\n")
 	service := daemon.NewPlatformService("", "")
@@ -278,7 +272,7 @@ func uninstallService(cmd *cobra.Command, args []string) {
 	fmt.Printf("  source ~/.$(basename \"$SHELL\")rc\n")
 }
 
-func showStatus(cmd *cobra.Command, args []string) {
+func showStatus(_ *cobra.Command, _ []string) {
 	service := daemon.NewPlatformService("", "")
 	status, err := service.Status()
 	if err != nil {
@@ -289,7 +283,7 @@ func showStatus(cmd *cobra.Command, args []string) {
 	fmt.Printf("Service installed: %t\n", service.IsInstalled())
 }
 
-func showVersion(cmd *cobra.Command, args []string) {
+func showVersion(_ *cobra.Command, _ []string) {
 	fmt.Printf("Smart Route Manager v%s\n", version)
 	fmt.Printf("Runtime: %s\n", runtime.Version())
 	fmt.Printf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
@@ -305,7 +299,7 @@ func showVersion(cmd *cobra.Command, args []string) {
 	}
 }
 
-func testConfiguration(cmd *cobra.Command, args []string) {
+func testConfiguration(_ *cobra.Command, _ []string) {
 	// Determine log level based on command line flags
 	logLevel := "info"
 	if verboseMode {
@@ -320,21 +314,13 @@ func testConfiguration(cmd *cobra.Command, args []string) {
 	log.Debug("Starting configuration test")
 	fmt.Println("✅ Configuration loaded successfully")
 
-	chnRoutes, err := config.LoadChnRoutesWithFallback(routeFile)
+	ipSet, err := config.LoadManagedIPSetWithFallback(routeFile, dnsFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Failed to load Chinese routes: %v\n", err)
 		os.Exit(1)
 	}
-	log.Debug("Chinese routes loading details", "file", routeFile, "networks", chnRoutes.Size())
-	fmt.Printf("✅ Chinese routes loaded: %d networks\n", chnRoutes.Size())
-
-	chnDNS, err := config.LoadChnDNSWithFallback(dnsFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to load Chinese DNS: %v\n", err)
-		os.Exit(1)
-	}
-	log.Debug("Chinese DNS loading details", "file", dnsFile, "servers", chnDNS.Size())
-	fmt.Printf("✅ Chinese DNS loaded: %d servers\n", chnDNS.Size())
+	log.Debug("Chinese routes loading details", "file", routeFile, "networks", ipSet.Size())
+	fmt.Printf("✅ Chinese routes loaded: %d networks\n", ipSet.Size())
 
 	rm, err := routing.NewPlatformRouteManager(cfg.ConcurrencyLimit, cfg.RetryAttempts)
 	if err != nil {

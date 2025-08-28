@@ -2,6 +2,7 @@ package config
 
 import (
 	_ "embed"
+	"net"
 	"strings"
 )
 
@@ -12,7 +13,7 @@ var embeddedDNSData string
 var embeddedRouteData string
 
 // GetEmbeddedDNSServers returns DNS servers from embedded data
-func GetEmbeddedDNSServers() (*DNSServers, error) {
+func GetEmbeddedDNSServers() ([]*net.IPNet, error) {
 	lines := strings.Split(strings.TrimSpace(embeddedDNSData), "\n")
 	return parseDNSLines(lines)
 }
@@ -20,31 +21,46 @@ func GetEmbeddedDNSServers() (*DNSServers, error) {
 // GetEmbeddedRoutes returns IP routes from embedded data
 func GetEmbeddedRoutes() (*IPSet, error) {
 	lines := strings.Split(strings.TrimSpace(embeddedRouteData), "\n")
-	return parseIPLines(lines)
+	ipSet := NewIPSet()
+	if err := ipSet.parseIPLines(lines); err != nil {
+		return nil, err
+	}
+	return ipSet, nil
 }
 
-// LoadChnDNSWithFallback loads DNS servers from file, falls back to embedded data
-func LoadChnDNSWithFallback(filename string) (*DNSServers, error) {
-	if filename != "" {
+// LoadManagedIPSetWithFallback loads IP routes and DNS servers from file, falls back to embedded data
+func LoadManagedIPSetWithFallback(routesFile string, dnsFile string) (*IPSet, error) {
+	var ipSet *IPSet
+	var dnsServers []*net.IPNet
+	var err error
+	if routesFile != "" {
 		// Try to load from external file first
-		if dns, err := LoadChnDNS(filename); err == nil {
-			return dns, nil
+		ipSet, err = LoadChnRoutes(routesFile)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		ipSet, err = GetEmbeddedRoutes()
+		if err != nil {
+			return nil, err
 		}
 	}
-	
-	// Fall back to embedded data
-	return GetEmbeddedDNSServers()
-}
 
-// LoadChnRoutesWithFallback loads routes from file, falls back to embedded data  
-func LoadChnRoutesWithFallback(filename string) (*IPSet, error) {
-	if filename != "" {
-		// Try to load from external file first
-		if routes, err := LoadChnRoutes(filename); err == nil {
-			return routes, nil
+	if dnsFile != "" {
+		dnsServers, err = LoadChnDNS(dnsFile)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		dnsServers, err = GetEmbeddedDNSServers()
+		if err != nil {
+			return nil, err
 		}
 	}
-	
-	// Fall back to embedded data
-	return GetEmbeddedRoutes()
+
+	for _, dnsIPNet := range dnsServers {
+		ipSet.Add(dnsIPNet)
+	}
+
+	return ipSet, nil
 }

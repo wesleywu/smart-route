@@ -13,20 +13,17 @@ import (
 
 // RouteSwitch handles the complete route switching logic used by both one-time and daemon modes
 type RouteSwitch struct {
-	rm            entities.RouteManager
-	managedRoutes *entities.NetworkSet
-	logger        *logger.Logger
+	rm           entities.RouteManager
+	managedIPSet *config.IPSet
+	logger       *logger.Logger
 }
 
 // NewRouteSwitch creates a new route switch handler
-func NewRouteSwitch(rm entities.RouteManager, chnRoutes *config.IPSet, chnDNS *config.DNSServers, logger *logger.Logger) (*RouteSwitch, error) {
-	managedRouteSet := buildManagedRouteSet(chnRoutes, chnDNS)
-	logger.Debug("Managed routes and DNSs", "total_count", managedRouteSet.Size())
-
+func NewRouteSwitch(rm entities.RouteManager, managedIPSet *config.IPSet, logger *logger.Logger) (*RouteSwitch, error) {
 	return &RouteSwitch{
-		rm:            rm,
-		managedRoutes: managedRouteSet,
-		logger:        logger,
+		rm:           rm,
+		managedIPSet: managedIPSet,
+		logger:       logger,
 	}, nil
 }
 
@@ -42,7 +39,7 @@ func (rs *RouteSwitch) InitRoutes() error {
 
 	// Check if VPN is connected by examining the interface
 	isVPNConnected := utils.IsVPNInterface(currentIface)
-	
+
 	if !isVPNConnected {
 		rs.logger.Info("VPN not connected - skipping route setup",
 			"current_interface", currentIface,
@@ -81,7 +78,7 @@ func (rs *RouteSwitch) SetupRoutes(physicalGateway net.IP) error {
 	}
 	rs.logger.Debug("Retrieved system routes", "total_count", len(systemRoutes))
 
-	existingRoutes := findMatchingRoute(systemRoutes, rs.managedRoutes)
+	existingRoutes := findMatchingRoute(systemRoutes, rs.managedIPSet)
 
 	if err := rs.cleanRoutes(existingRoutes); err != nil {
 		rs.logger.Error("failed to cleanup managed routes", "error", err)
@@ -91,7 +88,7 @@ func (rs *RouteSwitch) SetupRoutes(physicalGateway net.IP) error {
 	// Phase 2: Set up routes for current gateway
 	rs.logger.Debug("Phase 2: setting up routes for current gateway")
 
-	routesToAdd := rs.managedRoutes.ToRoutes(physicalGateway)
+	routesToAdd := buildRoutesFromIPSet(rs.managedIPSet, physicalGateway)
 
 	if err := rs.addRoutes(routesToAdd); err != nil {
 		rs.logger.Error("failed to setup routes for current gateway", "gateway", physicalGateway.String(), "error", err)
@@ -114,7 +111,7 @@ func (rs *RouteSwitch) CleanRoutes() error {
 	}
 	rs.logger.Debug("Retrieved system routes", "total_count", len(systemRoutes))
 
-	existingRoutes := findMatchingRoute(systemRoutes, rs.managedRoutes)
+	existingRoutes := findMatchingRoute(systemRoutes, rs.managedIPSet)
 
 	return rs.cleanRoutes(existingRoutes)
 }
@@ -158,37 +155,23 @@ func (rs *RouteSwitch) cleanRoutes(routesToDelete []*entities.Route) error {
 	return nil
 }
 
-// buildManagedRouteSet creates route set for the specified gateway
-func buildManagedRouteSet(chnRoutes *config.IPSet, chnDNS *config.DNSServers) *entities.NetworkSet {
-	routes := entities.NewNetworkSet()
-
-	// Add Chinese network routes
-	networks := chnRoutes.GetNetworks()
-	for _, network := range networks {
-		routes.Add(network)
-	}
-
-	// Add Chinese DNS routes
-	dnsIPs := chnDNS.GetIPs()
-	for _, ip := range dnsIPs {
-		var ipNet *net.IPNet
-		if ip.To4() != nil {
-			ipNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
-		} else {
-			ipNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
-		}
-		routes.Add(ipNet)
-	}
-
-	return routes
-}
-
-func findMatchingRoute(systemRoutes []*entities.Route, managedRouteSet *entities.NetworkSet) []*entities.Route {
+func findMatchingRoute(systemRoutes []*entities.Route, managedRouteSet *config.IPSet) []*entities.Route {
 	matchingRoutes := make([]*entities.Route, 0)
 	for _, route := range systemRoutes {
-		if managedRouteSet.ContainsNetwork(route.Destination) {
+		if managedRouteSet.ContainsIPNet(route.Destination) {
 			matchingRoutes = append(matchingRoutes, route)
 		}
 	}
 	return matchingRoutes
+}
+
+func buildRoutesFromIPSet(ipSet *config.IPSet, gateway net.IP) []*entities.Route {
+	routes := make([]*entities.Route, 0)
+	for _, network := range ipSet.IPNets() {
+		routes = append(routes, &entities.Route{
+			Destination: *network,
+			Gateway:     gateway,
+		})
+	}
+	return routes
 }

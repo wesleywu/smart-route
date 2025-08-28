@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// GatewayState represents the state of the gateway
 type GatewayState struct {
 	PreviousGateway net.IP    `json:"previous_gateway"`
 	PreviousIface   string    `json:"previous_interface"`
@@ -16,8 +17,10 @@ type GatewayState struct {
 	RouteCount      int       `json:"route_count"`
 }
 
+// DefaultStateFile is the default file to store the gateway state
 const DefaultStateFile = "/tmp/smartroute_gateway_state.json"
 
+// LoadGatewayState loads the gateway state from a file
 func LoadGatewayState(stateFile string) (*GatewayState, error) {
 	if stateFile == "" {
 		stateFile = DefaultStateFile
@@ -40,6 +43,7 @@ func LoadGatewayState(stateFile string) (*GatewayState, error) {
 	return &state, nil
 }
 
+// Save saves the gateway state to a file
 func (gs *GatewayState) Save(stateFile string) error {
 	if stateFile == "" {
 		stateFile = DefaultStateFile
@@ -63,6 +67,7 @@ func (gs *GatewayState) Save(stateFile string) error {
 	return nil
 }
 
+// Update updates the gateway state
 func (gs *GatewayState) Update(gateway net.IP, iface string, routeCount int) {
 	gs.PreviousGateway = make(net.IP, len(gateway))
 	copy(gs.PreviousGateway, gateway)
@@ -71,10 +76,12 @@ func (gs *GatewayState) Update(gateway net.IP, iface string, routeCount int) {
 	gs.RouteCount = routeCount
 }
 
+// HasPreviousState checks if the gateway state has a previous state
 func (gs *GatewayState) HasPreviousState() bool {
 	return gs.PreviousGateway != nil && !gs.LastUpdate.IsZero()
 }
 
+// IsGatewayChanged checks if the gateway has changed
 func (gs *GatewayState) IsGatewayChanged(currentGateway net.IP, currentIface string) bool {
 	if !gs.HasPreviousState() {
 		return false
@@ -83,6 +90,7 @@ func (gs *GatewayState) IsGatewayChanged(currentGateway net.IP, currentIface str
 	return !gs.PreviousGateway.Equal(currentGateway) || gs.PreviousIface != currentIface
 }
 
+// GetPreviousGateway returns the previous gateway
 func (gs *GatewayState) GetPreviousGateway() (net.IP, string) {
 	if !gs.HasPreviousState() {
 		return nil, ""
@@ -94,6 +102,7 @@ func (gs *GatewayState) GetPreviousGateway() (net.IP, string) {
 	return gateway, gs.PreviousIface
 }
 
+// Clear clears the gateway state
 func (gs *GatewayState) Clear() {
 	gs.PreviousGateway = nil
 	gs.PreviousIface = ""

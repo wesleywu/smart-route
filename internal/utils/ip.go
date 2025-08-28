@@ -118,3 +118,14 @@ func ParseDestination(dest string) (*net.IPNet, error) {
 
 	return nil, fmt.Errorf("unsupported destination format: %s", dest)
 }
+
+// ToIPNet converts an IP address to a network address
+func ToIPNet(ip net.IP) *net.IPNet {
+	var ipNet *net.IPNet
+	if ip.To4() != nil {
+		ipNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
+	} else {
+		ipNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
+	}
+	return ipNet
+}

@@ -86,13 +86,6 @@ func (l *Logger) BatchOperation(action string, total, success, failed int, durat
 		slog.Int64("duration_ms", duration))
 }
 
-func (l *Logger) ConfigLoaded(file string, routes, dns int) {
-	l.Info("Configuration loaded",
-		slog.String("config_file", file),
-		slog.Int("chn_routes", routes),
-		slog.Int("chn_dns", dns))
-}
-
 func (l *Logger) MonitorStart(interval string) {
 	l.Info("Network monitor started",
 		slog.String("poll_interval", interval))
