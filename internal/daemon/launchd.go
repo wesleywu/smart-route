@@ -62,17 +62,16 @@ func (s *LaunchdService) Install() error {
 		return fmt.Errorf("root privileges required to install launchd service")
 	}
 
+	// Create plist content with current executable path
 	plistContent := fmt.Sprintf(LaunchdPlistTemplate, s.execPath)
 
+	// Write plist file
 	if err := os.WriteFile(LaunchdPlistPath, []byte(plistContent), 0644); err != nil {
 		return fmt.Errorf("failed to write plist file: %w", err)
 	}
 
-	cmd := exec.Command("launchctl", "load", LaunchdPlistPath)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to load launchd service: %w", err)
-	}
-
+	// Don't automatically load here - let the installer script handle loading
+	// This allows for better control over the installation process
 	return nil
 }
 

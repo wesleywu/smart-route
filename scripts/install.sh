@@ -162,38 +162,34 @@ setup_path() {
 
 # Install system service
 install_service() {
-    print_info "Installing system service (requires sudo)..."
+    print_info "Installing system service..."
     
-    # Check if service is already installed
-    if sudo "$INSTALL_DIR/$BINARY_NAME" status >/dev/null 2>&1; then
-        print_warning "Service appears to be already installed"
-        read -p "Reinstall service? [y/N]: " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_info "Skipping service installation"
-            return
-        fi
-        
-        # Uninstall existing service
-        print_info "Uninstalling existing service..."
-        sudo "$INSTALL_DIR/$BINARY_NAME" uninstall || true
+    # Always stop and uninstall existing service first
+    if [[ -f "/Library/LaunchDaemons/com.smartroute.plist" ]]; then
+        print_info "Stopping existing service..."
+        sudo launchctl unload "/Library/LaunchDaemons/com.smartroute.plist" 2>/dev/null || true
+        print_info "Removing existing service configuration..."
+        sudo rm -f "/Library/LaunchDaemons/com.smartroute.plist" || true
     fi
     
-    # Install new service
+    # Install new service with latest binary
+    print_info "Installing service with latest binary..."
     sudo "$INSTALL_DIR/$BINARY_NAME" install
     print_success "✓ System service installed"
     
-    # Start service
-    print_info "Starting service..."
-    sudo launchctl start "$SERVICE_NAME" || {
-        print_warning "Failed to start service immediately, but it will start on next boot"
-    }
+    # Load and start the service
+    print_info "Loading service..."
+    sudo launchctl load "/Library/LaunchDaemons/com.smartroute.plist"
     
-    # Check service status
+    # Verify service is running
     sleep 2
-    local status
-    status=$(sudo "$INSTALL_DIR/$BINARY_NAME" status 2>/dev/null || echo "unknown")
-    print_info "Service status: $status"
+    if sudo launchctl list com.smartroute.daemon >/dev/null 2>&1; then
+        print_success "✓ Service is running"
+        print_info "Service will automatically start on boot"
+    else
+        print_warning "Service loaded but may not be running yet"
+        print_info "Check logs: tail -f /var/log/smartroute.out.log"
+    fi
 }
 
 # Verify installation
