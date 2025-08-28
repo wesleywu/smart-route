@@ -9,20 +9,22 @@ import (
 	"sync"
 )
 
+// IPSet is a set of IP networks
 type IPSet struct {
-	Networks []net.IPNet
+	Networks []*net.IPNet
 	mutex    sync.RWMutex
 }
 
+// NewIPSet creates a new IPSet
 func NewIPSet() *IPSet {
 	return &IPSet{
-		Networks: make([]net.IPNet, 0),
+		Networks: make([]*net.IPNet, 0),
 	}
 }
 
 // parseIPLines parses IP network lines from a slice of strings
 func parseIPLines(lines []string) (*IPSet, error) {
-	networks := make([]net.IPNet, 0, len(lines))
+	networks := make([]*net.IPNet, 0, len(lines))
 
 	for lineNum, line := range lines {
 		line = strings.TrimSpace(line)
@@ -36,12 +38,13 @@ func parseIPLines(lines []string) (*IPSet, error) {
 			return nil, fmt.Errorf("invalid CIDR at line %d: %s: %w", lineNum+1, line, err)
 		}
 
-		networks = append(networks, *network)
+		networks = append(networks, network)
 	}
 
 	return &IPSet{Networks: networks}, nil
 }
 
+// LoadChnRoutes loads all China ip net
 func LoadChnRoutes(file string) (*IPSet, error) {
 	f, err := os.Open(file)
 	if err != nil {
@@ -63,41 +66,19 @@ func LoadChnRoutes(file string) (*IPSet, error) {
 	return parseIPLines(lines)
 }
 
-func (ip *IPSet) Contains(addr net.IP) bool {
-	ip.mutex.RLock()
-	defer ip.mutex.RUnlock()
-
-	for _, network := range ip.Networks {
-		if network.Contains(addr) {
-			return true
-		}
-	}
-	return false
-}
-
+// Size returns the number of networks in the IPSet
 func (ip *IPSet) Size() int {
 	ip.mutex.RLock()
 	defer ip.mutex.RUnlock()
 	return len(ip.Networks)
 }
 
-func (ip *IPSet) Add(network net.IPNet) {
-	ip.mutex.Lock()
-	defer ip.mutex.Unlock()
-	ip.Networks = append(ip.Networks, network)
-}
-
-func (ip *IPSet) Clear() {
-	ip.mutex.Lock()
-	defer ip.mutex.Unlock()
-	ip.Networks = ip.Networks[:0]
-}
-
-func (ip *IPSet) GetNetworks() []net.IPNet {
+// GetNetworks returns a copy of the networks in the IPSet
+func (ip *IPSet) GetNetworks() []*net.IPNet {
 	ip.mutex.RLock()
 	defer ip.mutex.RUnlock()
 
-	networks := make([]net.IPNet, len(ip.Networks))
+	networks := make([]*net.IPNet, len(ip.Networks))
 	copy(networks, ip.Networks)
-	return networks
+	return ip.Networks
 }

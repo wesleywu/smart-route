@@ -120,7 +120,6 @@ func TestRoute(t *testing.T) {
 	route := entities.Route{
 		Destination: *network,  // Dereference pointer to get value
 		Gateway:     gateway,
-		Interface:   "eth0",
 		Metric:      1,
 	}
 	
@@ -131,11 +130,7 @@ func TestRoute(t *testing.T) {
 	if !route.Gateway.Equal(gateway) {
 		t.Error("Route gateway mismatch")
 	}
-	
-	if route.Interface != "eth0" {
-		t.Errorf("Expected interface eth0, got %s", route.Interface)
-	}
-	
+		
 	if route.Metric != 1 {
 		t.Errorf("Expected metric 1, got %d", route.Metric)
 	}

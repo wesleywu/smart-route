@@ -155,7 +155,8 @@ func (rm *BSDRouteManager) sendRouteMessage(msgType uint8, network *net.IPNet, g
 		hdr.flags = RTF_UP | RTF_GATEWAY | RTF_STATIC
 	} else if msgType == RTM_DELETE {
 		// For deletion, match the existing route flags exactly
-		hdr.flags = RTF_GATEWAY | RTF_STATIC
+		// Routes created with RTF_UP + RTF_GATEWAY + RTF_STATIC often get RTF_CLONING added by system
+		hdr.flags = RTF_UP | RTF_GATEWAY | RTF_STATIC
 	}
 
 	hdr.addrs = RTA_DST | RTA_GATEWAY | RTA_NETMASK

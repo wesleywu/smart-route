@@ -40,11 +40,11 @@ func (rm *WindowsRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, l
 	return rm.deleteRouteWithRetry(network, gateway)
 }
 
-func (rm *WindowsRouteManager) BatchAddRoutes(routes []entities.Route, log *logger.Logger) error {
+func (rm *WindowsRouteManager) BatchAddRoutes(routes []*entities.Route, log *logger.Logger) error {
 	return rm.batchOperation(routes, entities.RouteActionAdd, log)
 }
 
-func (rm *WindowsRouteManager) BatchDeleteRoutes(routes []entities.Route, log *logger.Logger) error {
+func (rm *WindowsRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *logger.Logger) error {
 	return rm.batchOperation(routes, entities.RouteActionDelete, log)
 }
 
@@ -67,14 +67,14 @@ func (rm *WindowsRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 }
 
 // ListSystemRoutes gets all routes from the system routing table
-func (rm *WindowsRouteManager) ListSystemRoutes() ([]entities.Route, error) {
-	cmd := exec.Command("route", "print")
+func (rm *WindowsRouteManager) ListSystemRoutes() ([]*entities.Route, error) {
+	cmd := exec.Command("netstat", "-rn")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list routes: %w", err)
 	}
 
-	return parseRouteOutput(string(output))
+	return parseNetstatOutput(string(output))
 }
 
 func (rm *WindowsRouteManager) FlushRoutes(gateway net.IP) error {
@@ -83,7 +83,7 @@ func (rm *WindowsRouteManager) FlushRoutes(gateway net.IP) error {
 		return fmt.Errorf("failed to list routes: %w", err)
 	}
 
-	var routesToDelete []entities.Route
+	var routesToDelete []*entities.Route
 	for _, route := range routes {
 		if route.Gateway.Equal(gateway) {
 			routesToDelete = append(routesToDelete, route)
@@ -106,16 +106,16 @@ func (rm *WindowsRouteManager) CleanupRoutesForNetworks(networks []net.IPNet, lo
 		// Don't fail - we'll try to delete anyway
 	}
 
-	var routesToDelete []entities.Route
-	
+	var routesToDelete []*entities.Route
+
 	// Find existing routes that match our target networks
 	for _, network := range networks {
 		// Check all current routes to see if any match this network
 		for _, route := range allRoutes {
 			if routesMatch(network, route.Destination) {
 				routesToDelete = append(routesToDelete, route)
-				log.Debug("found existing route to cleanup", 
-					"network", route.Destination.String(), 
+				log.Debug("found existing route to cleanup",
+					"network", route.Destination.String(),
 					"gateway", route.Gateway.String())
 			}
 		}
@@ -133,7 +133,6 @@ func (rm *WindowsRouteManager) CleanupRoutesForNetworks(networks []net.IPNet, lo
 	return nil
 }
 
-
 func (rm *WindowsRouteManager) Close() error {
 	return nil
 }
@@ -141,23 +140,23 @@ func (rm *WindowsRouteManager) Close() error {
 func (rm *WindowsRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP) error {
 	var lastErr error
 	start := time.Now()
-	
+
 	for attempt := 0; attempt < rm.maxRetries; attempt++ {
 		err := rm.addRouteDirect(network, gateway)
 		if err == nil {
 			rm.metrics.RecordOperation(time.Since(start), true)
 			return nil
 		}
-		
+
 		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
-		
+
 		lastErr = err
 		time.Sleep(time.Duration(attempt+1) * time.Second)
 	}
-	
+
 	rm.metrics.RecordOperation(time.Since(start), false)
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }
@@ -165,23 +164,23 @@ func (rm *WindowsRouteManager) addRouteWithRetry(network *net.IPNet, gateway net
 func (rm *WindowsRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.IP) error {
 	var lastErr error
 	start := time.Now()
-	
+
 	for attempt := 0; attempt < rm.maxRetries; attempt++ {
 		err := rm.deleteRouteDirect(network, gateway)
 		if err == nil {
 			rm.metrics.RecordOperation(time.Since(start), true)
 			return nil
 		}
-		
+
 		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
-		
+
 		lastErr = err
 		time.Sleep(time.Duration(attempt+1) * time.Second)
 	}
-	
+
 	rm.metrics.RecordOperation(time.Since(start), false)
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }
@@ -205,7 +204,7 @@ func (rm *WindowsRouteManager) addRouteDirect(network *net.IPNet, gateway net.IP
 		}
 		return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 	}
-	
+
 	_ = ones
 	return nil
 }
@@ -223,18 +222,18 @@ func (rm *WindowsRouteManager) deleteRouteDirect(network *net.IPNet, gateway net
 		}
 		return &entities.RouteOperationError{ErrorType: entities.RouteErrSystemCall, Destination: *network, Gateway: gateway, Cause: err}
 	}
-	
+
 	return nil
 }
 
-func (rm *WindowsRouteManager) batchOperation(routes []entities.Route, action entities.RouteAction, log *logger.Logger) error {
+func (rm *WindowsRouteManager) batchOperation(routes []*entities.Route, action entities.RouteAction, log *logger.Logger) error {
 	semaphore := make(chan struct{}, rm.concurrencyLimit)
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(routes))
 
 	for _, route := range routes {
 		wg.Add(1)
-		go func(r entities.Route) {
+		go func(r *entities.Route) {
 			defer wg.Done()
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
@@ -279,12 +278,12 @@ func (rm *WindowsRouteManager) parseDefaultRouteWindows(output string) (net.IP, 
 			if gateway == nil {
 				continue
 			}
-			
+
 			ifaceIndex, err := strconv.Atoi(fields[4])
 			if err != nil {
 				continue
 			}
-			
+
 			iface := fmt.Sprintf("Interface%d", ifaceIndex)
 			return gateway, iface, nil
 		}
@@ -293,6 +292,3 @@ func (rm *WindowsRouteManager) parseDefaultRouteWindows(output string) (net.IP, 
 	return nil, "", fmt.Errorf("no default gateway found")
 }
 
-func parseRouteOutput(output string) ([]entities.Route, error) {
-	return nil, fmt.Errorf("not implemented")
-}

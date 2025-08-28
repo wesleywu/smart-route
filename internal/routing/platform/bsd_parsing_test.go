@@ -207,7 +207,7 @@ default            192.168.32.1       UGScIg                en0
 	// Log all found routes for debugging
 	t.Logf("All parsed routes:")
 	for _, route := range routes {
-		t.Logf("  %s -> %s (%s)", route.Destination.String(), route.Gateway.String(), route.Interface)
+		t.Logf("  %s -> %s", route.Destination.String(), route.Gateway.String())
 	}
 }
 

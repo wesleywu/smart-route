@@ -1,4 +1,5 @@
 //go:build darwin || freebsd
+
 // Package platform provides platform-specific route manager implementations
 package platform
 
@@ -16,9 +17,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-
-
-
 // BSDRouteManager is a route manager for BSD-based systems
 type BSDRouteManager struct {
 	socket           int
@@ -26,7 +24,7 @@ type BSDRouteManager struct {
 	concurrencyLimit int
 	maxRetries       int
 	metrics          *metrics.Metrics
-	seqNum           int32  // Add sequence number counter
+	seqNum           int32 // Add sequence number counter
 }
 
 // NewPlatformRouteManager creates a platform-specific route manager (BSD implementation)
@@ -41,7 +39,7 @@ func NewPlatformRouteManager(concurrencyLimit, maxRetries int) (entities.RouteMa
 		concurrencyLimit: concurrencyLimit,
 		maxRetries:       maxRetries,
 		metrics:          metrics.NewMetrics(),
-		seqNum:           1,  // Initialize sequence number
+		seqNum:           1, // Initialize sequence number
 	}, nil
 }
 
@@ -56,16 +54,16 @@ func (rm *BSDRouteManager) DeleteRoute(network *net.IPNet, gateway net.IP, log *
 }
 
 // BatchAddRoutes adds multiple routes to the system
-func (rm *BSDRouteManager) BatchAddRoutes(routes []entities.Route, log *logger.Logger) error {
+func (rm *BSDRouteManager) BatchAddRoutes(routes []*entities.Route, log *logger.Logger) error {
 	return rm.batchOperation(routes, entities.RouteActionAdd, log)
 }
 
 // BatchDeleteRoutes deletes multiple routes from the system
-func (rm *BSDRouteManager) BatchDeleteRoutes(routes []entities.Route, log *logger.Logger) error {
+func (rm *BSDRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *logger.Logger) error {
 	return rm.batchOperation(routes, entities.RouteActionDelete, log)
 }
 
-// GetPhysicalGateway gets the physical gateway from the system (for route management)  
+// GetPhysicalGateway gets the physical gateway from the system (for route management)
 func (rm *BSDRouteManager) GetPhysicalGateway() (net.IP, string, error) {
 	// ALWAYS look for physical interface gateway, never rely on default route
 	// In VPN scenarios, default route will point to VPN, but we need the physical gateway
@@ -130,8 +128,8 @@ func (rm *BSDRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 	return gateway, iface, nil
 }
 
-// ListSystemRoutes lists all routes from the system
-func (rm *BSDRouteManager) ListSystemRoutes() ([]entities.Route, error) {
+// ListSystemRoutes gets all routes from the system
+func (rm *BSDRouteManager) ListSystemRoutes() ([]*entities.Route, error) {
 	cmd := exec.Command("netstat", "-rn")
 	output, err := cmd.Output()
 	if err != nil {
@@ -150,23 +148,23 @@ func (rm *BSDRouteManager) Close() error {
 func (rm *BSDRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	var lastErr error
 	start := time.Now()
-	
+
 	for attempt := 0; attempt < rm.maxRetries; attempt++ {
 		err := rm.addRouteNative(network, gateway, log)
 		if err == nil {
 			rm.metrics.RecordOperation(time.Since(start), true)
 			return nil
 		}
-		
+
 		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
-		
+
 		lastErr = err
 		time.Sleep(time.Duration(attempt+1) * time.Second)
 	}
-	
+
 	rm.metrics.RecordOperation(time.Since(start), false)
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }
@@ -175,37 +173,36 @@ func (rm *BSDRouteManager) addRouteWithRetry(network *net.IPNet, gateway net.IP,
 func (rm *BSDRouteManager) deleteRouteWithRetry(network *net.IPNet, gateway net.IP, log *logger.Logger) error {
 	var lastErr error
 	start := time.Now()
-	
+
 	for attempt := 0; attempt < rm.maxRetries; attempt++ {
 		err := rm.deleteRouteNative(network, gateway, log)
-		
+
 		if err == nil {
 			rm.metrics.RecordOperation(time.Since(start), true)
 			return nil
 		}
-		
+
 		if routeErr, ok := err.(*entities.RouteOperationError); ok && !routeErr.IsRetryable() {
 			rm.metrics.RecordOperation(time.Since(start), false)
 			return err
 		}
-		
+
 		lastErr = err
 		time.Sleep(time.Duration(attempt+1) * time.Second)
 	}
-	
+
 	rm.metrics.RecordOperation(time.Since(start), false)
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }
 
-
-func (rm *BSDRouteManager) batchOperation(routes []entities.Route, action entities.RouteAction, log *logger.Logger) error {
+func (rm *BSDRouteManager) batchOperation(routes []*entities.Route, action entities.RouteAction, log *logger.Logger) error {
 	semaphore := make(chan struct{}, rm.concurrencyLimit)
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(routes))
 
 	for _, route := range routes {
 		wg.Add(1)
-		go func(r entities.Route) {
+		go func(r *entities.Route) {
 			defer wg.Done()
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
@@ -239,182 +236,6 @@ func (rm *BSDRouteManager) batchOperation(routes []entities.Route, action entiti
 	return nil
 }
 
-
-func parseNetstatOutput(output string) ([]entities.Route, error) {
-	var routes []entities.Route
-	lines := strings.Split(output, "\n")
-	
-	// Skip header lines and find the start of routing table
-	start := -1
-	for i, line := range lines {
-		if strings.Contains(line, "Destination") && strings.Contains(line, "Gateway") {
-			start = i + 1
-			break
-		}
-	}
-	
-	if start == -1 {
-		// Try alternative header format
-		for i, line := range lines {
-			if strings.Contains(line, "Internet:") {
-				start = i + 2 // Skip "Internet:" and the header line
-				break
-			}
-		}
-	}
-	
-	if start == -1 {
-		return routes, nil // No routing table found
-	}
-	
-	for i := start; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		
-		// Skip non-route lines (like "Internet6:" section)
-		if strings.Contains(line, ":") && !strings.Contains(line, ".") {
-			break
-		}
-		
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		
-		destination := fields[0]
-		gateway := fields[1]
-		iface := ""
-		
-		// Parse fields based on standard netstat format:
-		// Destination Gateway Flags Netif [Expire]
-		if len(fields) >= 4 {
-			iface = fields[3] // Netif is always the 4th field (index 3)
-		}
-		
-		// Skip if no interface or gateway
-		if gateway == "" || gateway == "-" || iface == "" {
-			continue
-		}
-		
-		// Parse destination network
-		network, err := parseDestination(destination)
-		if err != nil {
-			continue // Skip unparseable destinations
-		}
-		
-		// Parse gateway IP
-		gwIP := net.ParseIP(gateway)
-		if gwIP == nil {
-			continue // Skip unparseable gateways (like link# formats)
-		}
-		
-		route := entities.Route{
-			Destination: *network,
-			Gateway:   gwIP,
-			Interface: iface,
-		}
-		
-		routes = append(routes, route)
-	}
-	
-	return routes, nil
-}
-
-// parseDestination parses various destination formats from netstat
-func parseDestination(dest string) (*net.IPNet, error) {
-	// Handle special destinations
-	if dest == "default" {
-		_, network, _ := net.ParseCIDR("0.0.0.0/0")
-		return network, nil
-	}
-	
-	// Handle CIDR notation (e.g., "192.168.1.0/24" or "114.114.114.114/32")
-	if strings.Contains(dest, "/") {
-		// Handle netstat's simplified format like "1.0.1/24" -> "1.0.1.0/24"
-		parts := strings.Split(dest, "/")
-		if len(parts) == 2 {
-			ip := parts[0]
-			mask := parts[1]
-			
-			// Count dots in IP part
-			dotCount := strings.Count(ip, ".")
-			
-			// Add missing octets to make it a valid IP
-			switch dotCount {
-			case 0: // "1/24" -> "1.0.0.0/24"
-				ip = ip + ".0.0.0"
-			case 1: // "1.0/24" -> "1.0.0.0/24" 
-				ip = ip + ".0.0"
-			case 2: // "1.0.1/24" -> "1.0.1.0/24"
-				ip = ip + ".0"
-			case 3: // "1.0.1.0/24" - already complete
-				// no change needed
-			}
-			
-			dest = ip + "/" + mask
-		}
-		
-		_, network, err := net.ParseCIDR(dest)
-		return network, err
-	}
-	
-	// Handle single IP addresses (assume /32 for IPv4, /128 for IPv6)
-	ip := net.ParseIP(dest)
-	if ip != nil {
-		if ip.To4() != nil {
-			// IPv4
-			return &net.IPNet{
-				IP:   ip,
-				Mask: net.CIDRMask(32, 32),
-			}, nil
-		}
-		if ip.To16() != nil {
-			// IPv6
-			return &net.IPNet{
-				IP:   ip,
-				Mask: net.CIDRMask(128, 128),
-			}, nil
-		}
-	}
-	
-	// Handle incomplete network addresses without explicit mask (e.g., "203.26.55" -> "203.26.55.0/24")
-	if strings.Contains(dest, ".") {
-		dotCount := strings.Count(dest, ".")
-		if dotCount < 3 {
-			// Add missing octets and assume appropriate network mask
-			switch dotCount {
-			case 1: // "203.26" -> "203.26.0.0/16"
-				dest = dest + ".0.0"
-				return &net.IPNet{
-					IP:   net.ParseIP(dest),
-					Mask: net.CIDRMask(16, 32),
-				}, nil
-			case 2: // "203.26.55" -> "203.26.55.0/24"
-				dest = dest + ".0"
-				return &net.IPNet{
-					IP:   net.ParseIP(dest),
-					Mask: net.CIDRMask(24, 32),
-				}, nil
-			}
-		}
-	}
-	
-	// Assume /32 for what looks like a complete IP
-	testIP := net.ParseIP(dest)
-	if testIP != nil {
-		if testIP.To4() != nil {
-			return &net.IPNet{
-				IP:   testIP,
-				Mask: net.CIDRMask(32, 32),
-			}, nil
-		}
-	}
-	
-	return nil, fmt.Errorf("unsupported destination format: %s", dest)
-}
-
 // getPhysicalGateway gets the physical gateway for macOS/BSD systems
 func (rm *BSDRouteManager) getPhysicalGateway() (net.IP, string, error) {
 	// Strategy 1: First try to get gateway from active network interface (most reliable for detecting changes)
@@ -422,7 +243,7 @@ func (rm *BSDRouteManager) getPhysicalGateway() (net.IP, string, error) {
 	if err == nil {
 		return gateway, iface, nil
 	}
-	
+
 	// Strategy 2: If interface method fails, fall back to route table analysis
 	cmd := exec.Command("netstat", "-rn")
 	output, err := cmd.Output()
@@ -431,27 +252,27 @@ func (rm *BSDRouteManager) getPhysicalGateway() (net.IP, string, error) {
 	}
 
 	lines := strings.Split(string(output), "\n")
-	
+
 	// Look for any existing routes through physical interfaces
 	gatewayCount := make(map[string]int)
 	gatewayToIface := make(map[string]string)
-	
+
 	for _, line := range lines {
 		fields := strings.Fields(line)
 		if len(fields) >= 4 {
 			gatewayStr := fields[1]
 			iface := fields[3]
-			
+
 			// Only consider physical interfaces (typically en0, en1, eth0, etc.)
 			if !rm.isPhysicalInterface(iface) {
 				continue
 			}
-			
+
 			// Skip link-local gateways
 			if strings.HasPrefix(gatewayStr, "link#") {
 				continue
 			}
-			
+
 			// Check if this is a valid IP gateway
 			gateway := net.ParseIP(gatewayStr)
 			if gateway != nil && rm.isPrivateIP(gateway) {
@@ -460,7 +281,7 @@ func (rm *BSDRouteManager) getPhysicalGateway() (net.IP, string, error) {
 			}
 		}
 	}
-	
+
 	// Find the most commonly used physical gateway
 	var bestGateway string
 	maxCount := 0
@@ -470,11 +291,11 @@ func (rm *BSDRouteManager) getPhysicalGateway() (net.IP, string, error) {
 			bestGateway = gw
 		}
 	}
-	
+
 	if bestGateway != "" {
 		return net.ParseIP(bestGateway), gatewayToIface[bestGateway], nil
 	}
-	
+
 	return nil, "", fmt.Errorf("no physical gateway found")
 }
 
@@ -483,11 +304,11 @@ func (rm *BSDRouteManager) isPhysicalInterface(iface string) bool {
 	// Physical interfaces: en0, en1, eth0, eth1, etc.
 	// Skip VPN: utun, tun, tap, ppp, ipsec, etc.
 	// Skip system: lo, awdl, bridge, etc.
-	
+
 	if strings.HasPrefix(iface, "en") || strings.HasPrefix(iface, "eth") {
 		return true
 	}
-	
+
 	// Skip VPN interfaces
 	vpnPrefixes := []string{"utun", "tun", "tap", "ppp", "ipsec", "wg"}
 	for _, prefix := range vpnPrefixes {
@@ -495,7 +316,7 @@ func (rm *BSDRouteManager) isPhysicalInterface(iface string) bool {
 			return false
 		}
 	}
-	
+
 	// Skip system interfaces
 	systemPrefixes := []string{"lo", "awdl", "bridge", "gif", "stf"}
 	for _, prefix := range systemPrefixes {
@@ -503,7 +324,7 @@ func (rm *BSDRouteManager) isPhysicalInterface(iface string) bool {
 			return false
 		}
 	}
-	
+
 	return false
 }
 
@@ -534,7 +355,7 @@ func (rm *BSDRouteManager) getGatewayFromInterfaces() (net.IP, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get network interfaces: %w", err)
 	}
-	
+
 	// Find the primary active physical interface
 	for _, iface := range ifaces {
 		if iface.Flags&net.FlagUp != 0 && rm.isPhysicalInterface(iface.Name) {
@@ -542,7 +363,7 @@ func (rm *BSDRouteManager) getGatewayFromInterfaces() (net.IP, string, error) {
 			if err != nil {
 				continue
 			}
-			
+
 			// Check if this interface has a valid IP
 			for _, addr := range addrs {
 				if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
@@ -558,7 +379,7 @@ func (rm *BSDRouteManager) getGatewayFromInterfaces() (net.IP, string, error) {
 			}
 		}
 	}
-	
+
 	return nil, "", fmt.Errorf("no physical gateway found")
 }
 
@@ -568,13 +389,13 @@ func (rm *BSDRouteManager) calculateGatewayFromSubnet(ipnet *net.IPNet) net.IP {
 	if ip == nil {
 		return nil
 	}
-	
+
 	// For immediate detection, calculate likely gateway (.1 in the network)
 	// This is fast and works for most networks
 	network := ip.Mask(ipnet.Mask)
 	gateway := make(net.IP, 4)
 	copy(gateway, network)
 	gateway[3] = 1
-	
+
 	return gateway
 }

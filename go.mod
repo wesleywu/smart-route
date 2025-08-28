@@ -1,8 +1,11 @@
 module github.com/wesleywu/smart-route
 
-go 1.21
+go 1.23
+
+toolchain go1.24.0
 
 require (
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/spf13/cobra v1.8.0
 	golang.org/x/sys v0.15.0
 )
