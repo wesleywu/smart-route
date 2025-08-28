@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// GetPhysicalGateway gets the physical gateway for macOS/BSD/Linux systems
-func GetPhysicalGateway() (net.IP, string, error) {
+// GetPhysicalGatewayBSD gets the physical gateway for macOS/BSD/Linux systems
+func GetPhysicalGatewayBSD() (net.IP, string, error) {
 	// Strategy 1: First try to get gateway from active network interface (most reliable for detecting changes)
 	gateway, iface, err := GetGatewayFromInterfaces()
 	if err == nil {

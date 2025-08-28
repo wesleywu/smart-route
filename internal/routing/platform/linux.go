@@ -52,7 +52,8 @@ func (rm *LinuxRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *lo
 func (rm *LinuxRouteManager) GetPhysicalGateway() (net.IP, string, error) {
 	// ALWAYS look for physical interface gateway, never rely on default route
 	// In VPN scenarios, default route will point to VPN, but we need the physical gateway
-	return utils.GetPhysicalGateway()
+	// TODO: Implement Linux specific physical gateway detection
+	return utils.GetPhysicalGatewayBSD()
 }
 
 // GetSystemDefaultRoute gets the current default route (including VPN) from the system

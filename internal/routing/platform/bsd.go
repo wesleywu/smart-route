@@ -68,7 +68,7 @@ func (rm *BSDRouteManager) BatchDeleteRoutes(routes []*entities.Route, log *logg
 func (rm *BSDRouteManager) GetPhysicalGateway() (net.IP, string, error) {
 	// ALWAYS look for physical interface gateway, never rely on default route
 	// In VPN scenarios, default route will point to VPN, but we need the physical gateway
-	return utils.GetPhysicalGateway()
+	return utils.GetPhysicalGatewayBSD()
 }
 
 // GetSystemDefaultRoute gets the current default route (including VPN) from the system
@@ -106,7 +106,7 @@ func (rm *BSDRouteManager) GetSystemDefaultRoute() (net.IP, string, error) {
 	if iface == "" {
 		// During network transitions, route output might be incomplete
 		// Try to fall back to physical gateway information
-		physGW, physIface, physErr := utils.GetPhysicalGateway()
+		physGW, physIface, physErr := utils.GetPhysicalGatewayBSD()
 		if physErr == nil && physIface != "" {
 			// Use physical interface as fallback, but keep the current gateway if found
 			if gateway == nil {
